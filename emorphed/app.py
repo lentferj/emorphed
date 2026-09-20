@@ -1,0 +1,931 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: Copyright (C) 2026  emorphed contributors
+#
+# This file is part of emorphed.
+#
+# The key-hint legend is ported from the sibling rxved and p2ked projects,
+# which port it from s3ked, eosed and k2kremote:
+#   Copyright (C) 2026  rxved / p2ked / s3ked / eosed / k2kremote
+#   contributors                                     - GPL-2.0-or-later
+#
+# emorphed is free software: you can redistribute it and/or modify it under the
+# terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 2 of the License, or (at your option) any later
+# version.
+#
+# emorphed is distributed in the hope that it will be useful, but WITHOUT ANY
+# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+# details.
+
+"""``emorphed`` -- a terminal browser for the E-mu Morpheus.
+
+Two panes: regions on the left, that region's contents on the right.
+
+Four rules, each about not lying to the user:
+
+**Moving the cursor never sends anything.** Selecting a preset changes
+what the instrument plays. Selection is bound to Enter and nothing else,
+and a test enforces it.
+
+**Reading names makes no sound, and costs one message.** This instrument
+has a Preset List Request that returns every name in the order it shows
+them -- and the same for hyperpresets and midimaps. None of the sibling
+instruments can do that, which is why `r` here reads a whole kind at once
+rather than walking it.
+
+**A preset index is not a program number.** The index is what System
+Exclusive addresses; a Program Map decides what program change reaches a
+preset, and for ROM or card presets there may be no program number at all
+until a map gives one. The status line says which it used whenever it
+sends one.
+
+**Two of the seven regions need a card.** A request for one with no card
+fitted is ignored outright -- not refused, ignored -- so those regions are
+marked and a read of them that comes back empty is reported as "no card"
+rather than as a fault.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import threading
+from typing import Dict, List, Optional
+
+from textual import work
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Header, Input, Label, Static
+
+from emu import banks
+from emu import catalog as cat
+from emu import messages as msg
+
+
+__all__ = ["EmorphedApp", "main", "build_parser", "KEY_HINTS", "wrap_blocks"]
+
+_SEP = " · "
+
+#: What `F` steps through. The same three the sibling rxved and p2ked use,
+#: so the key means the same thing across these projects.
+VIEW_ALL = "all"
+VIEW_BANK_FAVOURITES = "bank-favourites"
+VIEW_ALL_FAVOURITES = "all-favourites"
+VIEW_CYCLE = (VIEW_ALL, VIEW_BANK_FAVOURITES, VIEW_ALL_FAVOURITES)
+VIEW_LABELS = {
+    VIEW_ALL: "all slots",
+    VIEW_BANK_FAVOURITES: "favourites in this bank",
+    VIEW_ALL_FAVOURITES: "every favourite, all banks",
+}
+
+KEY_HINTS = (
+    "↑↓ move", "tab pane", "⏎ select on the unit", "r read names",
+    "/ search", "[ ] channel", "c set channel", "d device ID",
+    "f favourite", "F favourites view", "t tags", "n note", "i device",
+    "? help", "q quit",
+)
+
+
+def wrap_blocks(blocks, width: int, sep: str = _SEP) -> str:
+    """Pack hints into lines no wider than ``width``.
+
+    Ported from the siblings. Breaks happen only between blocks, so a hint
+    is never split mid-label. The point is that the legend wraps instead of
+    truncating: a footer that silently drops its last keys teaches the user
+    those keys do not exist.
+    """
+    lines, current = [], ""
+    for block in blocks:
+        candidate = block if not current else current + sep + block
+        if width and len(candidate) > width and current:
+            lines.append(current)
+            current = block
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return "\n".join(lines)
+
+
+class KeyHints(Static):
+    """The legend, wrapped to the window rather than truncated."""
+
+    DEFAULT_CSS = "KeyHints { height: auto; background: $panel; padding: 0 1; }"
+
+    def on_mount(self) -> None:
+        self._render_hints()
+
+    def on_resize(self) -> None:
+        self._render_hints()
+
+    def _render_hints(self) -> None:
+        # NOT named _render: Widget._render is Textual's own, and shadowing
+        # it makes every layout pass ask a None for its height.
+        self.update(wrap_blocks(KEY_HINTS, max(self.size.width - 2, 20)))
+
+
+class ReportScreen(ModalScreen[None]):
+    """A scrollable block of text."""
+
+    DEFAULT_CSS = """
+    ReportScreen { align: center middle; }
+    ReportScreen > Vertical {
+        width: 84; height: 80%; border: thick $accent;
+        background: $surface; padding: 1 2;
+    }
+    ReportScreen .body { height: 1fr; overflow-y: auto; }
+    """
+
+    BINDINGS = [Binding("escape", "close", "Close"),
+                Binding("q", "close", "Close")]
+
+    def __init__(self, title: str, body: str) -> None:
+        super().__init__()
+        self._title = title
+        self._body = body
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(f"[b]{self._title}[/b]")
+            yield Static(self._body, classes="body")
+            yield Static("[dim]esc / q to close[/dim]")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class PromptScreen(ModalScreen[Optional[str]]):
+    """One line of text."""
+
+    DEFAULT_CSS = """
+    PromptScreen { align: center middle; }
+    PromptScreen > Vertical {
+        width: 70; height: auto; border: thick $accent;
+        background: $surface; padding: 1 2;
+    }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, prompt: str, current: str = "") -> None:
+        super().__init__()
+        self._prompt = prompt
+        self._current = current
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(self._prompt)
+            yield Input(value=self._current, id="value")
+
+    def on_mount(self) -> None:
+        self.query_one("#value", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class EmorphedApp(App):
+    """The browser."""
+
+    CSS = """
+    Screen { layers: base; }
+    #panes { height: 1fr; }
+    /* Sized to its content. A fixed width does not truncate the end
+       of a label -- the table scrolls sideways and clips the
+       *start*, so a bank reads as nonsense rather than as narrow. */
+    #bank-table {
+        width: auto; min-width: 20; max-width: 52;
+        border-right: solid $panel;
+    }
+    #slot-table { width: 1fr; }
+    DataTable { height: 1fr; }
+    #detail { height: 3; padding: 0 1; border-top: solid $panel; }
+    #status { height: 1; background: $boost; color: $text; padding: 0 1; }
+    """
+
+    BINDINGS = [
+        # Enter is NOT bound here: a focused DataTable consumes it for its
+        # own row selection, so it arrives as RowSelected instead.
+        Binding("r", "read_names", "Read names"),
+        Binding("left_square_bracket", "channel_down", "Channel -"),
+        Binding("right_square_bracket", "channel_up", "Channel +"),
+        Binding("c", "pick_channel", "Set channel"),
+        Binding("d", "pick_device_id", "Set device ID"),
+        Binding("f", "toggle_favorite", "Favourite"),
+        Binding("F", "cycle_favorites", "Favourites view"),
+        Binding("t", "edit_tags", "Tags"),
+        Binding("n", "edit_note", "Note"),
+        Binding("slash", "search", "Search"),
+        Binding("i", "device_info", "Device"),
+        Binding("question_mark", "help", "Help"),
+        Binding("tab", "switch_pane", "Switch pane"),
+        Binding("q", "quit", "Quit"),
+    ]
+
+    def __init__(self, device, *, catalog=None, favorites=None,
+                 config_path: Optional[str] = None) -> None:
+        super().__init__()
+        self.device = device
+        self.catalog = catalog if catalog is not None else cat.empty()
+        #: Injected, never opened here, so a test cannot write into the
+        #: user's real database.
+        self.favorites = favorites
+        #: Where the send channel is remembered. Injected and None
+        #: in tests, so a test cannot drop a config into the
+        #: working directory.
+        self._config_path = config_path
+        self.view_mode = VIEW_ALL
+        self._lock = threading.RLock()
+        self._bank_ids: List[str] = banks.region_ids()
+        self._current_bank = self._bank_ids[0]
+        self._current: List[banks.Slot] = []
+        self._busy = False
+        self._filling = False
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Horizontal(id="panes"):
+            yield DataTable(id="bank-table", cursor_type="row")
+            yield DataTable(id="slot-table", cursor_type="row")
+        yield Static("", id="detail")
+        yield Static("", id="status")
+        yield KeyHints()
+
+    def on_mount(self) -> None:
+        self.title = "emorphed"
+        table = self.query_one("#bank-table", DataTable)
+        for label, key in (("region", "bank"), ("n", "n"), ("", "src"),
+                           ("♥", "fav")):
+            table.add_column(label, key=key)
+        for bank_id in self._bank_ids:
+            entry = banks.region(bank_id)
+            marked = len(self._favorite_keys(bank_id))
+            table.add_row(entry.label, str(entry.count),
+                          ("card" if entry.needs_card
+                           else ("" if entry.writable else "rom")),
+                          # blank rather than "0": a column of zeroes is
+                          # noise, and the eye wants the few that differ
+                          str(marked) if marked else "", key=bank_id)
+
+        slots = self.query_one("#slot-table", DataTable)
+        # The favourite marker leads the row rather than trailing it: it is
+        # a gutter mark the eye runs down, and gluing it to the name would
+        # carry it into anything that sorts or searches.
+        for label, key in (("♥", "fav"), ("#", "num"), ("name", "name"),
+                           ("index", "index")):
+            slots.add_column(label, key=key)
+        self._fill(self._current_bank)
+        table.focus()
+        self.notify_status(
+            f"{len(self.catalog)} names from the catalog" if self.catalog
+            else "no catalog -- numbers only. Build one with "
+                 "tools/extract_catalog.py, or press r to read from the unit."
+        )
+
+    # --- filling ------------------------------------------------------------
+
+    def _favorite_keys(self, bank_id: str) -> set:
+        if self.favorites is None:
+            return set()
+        return self.favorites.keys_for_bank(bank_id)
+
+    def _all_favourites(self) -> List[banks.Slot]:
+        """Every favourite in every bank, in bank order then number.
+
+        Built from the slots rather than from the favourites rows, so a row
+        naming a bank this build does not know is skipped rather than
+        breaking the list.
+        """
+        if self.favorites is None:
+            return []
+        wanted = {}
+        for favourite in self.favorites.all(order="bank"):
+            wanted.setdefault(favourite.bank_id, set()).add(favourite.number)
+        out = []
+        for bank_id in banks.region_ids():
+            numbers = wanted.get(bank_id)
+            if not numbers:
+                continue
+            out.extend(e for e in banks.slots(bank_id)
+                       if e.number in numbers)
+        return out
+
+    def _visible(self, bank_id: str) -> List[banks.Slot]:
+        if self.view_mode == VIEW_ALL_FAVOURITES:
+            return self._all_favourites()
+        entries = banks.slots(bank_id)
+        if self.view_mode == VIEW_BANK_FAVOURITES:
+            marked = self._favorite_keys(bank_id)
+            entries = [e for e in entries if e.number in marked]
+        return entries
+
+
+    def _cursor_entry(self):
+        """The row under the cursor, or None."""
+        table = self.query_one("#slot-table", DataTable)
+        row = table.cursor_row
+        if not self._current or row is None or row >= len(self._current):
+            return None
+        return self._current[row]
+
+
+    # --- the send channel ---------------------------------------------------
+
+    def _channel(self) -> int:
+        return getattr(self.device, "channel", 0)
+
+    def _set_channel(self, channel: int) -> None:
+        """Change the channel selections are sent on, and remember it."""
+        channel = max(0, min(15, channel))
+        try:
+            self.device.channel = channel
+        except Exception:
+            self.notify_status("this device has no settable channel",
+                               refused=True)
+            return
+        self._remember_channel(channel)
+        self.notify_status(f"sending on MIDI channel {channel + 1}")
+
+    def _remember_channel(self, channel: int) -> None:
+        """Save it for next time. Only OSError is swallowed."""
+        if getattr(self, "_config_path", None) is None:
+            return
+        from nano import config
+
+        try:
+            config.save_channel(channel, self._config_path)
+        except OSError:
+            pass
+
+    def action_channel_up(self) -> None:
+        self._set_channel(self._channel() + 1)
+
+    def action_channel_down(self) -> None:
+        self._set_channel(self._channel() - 1)
+
+    def action_pick_device_id(self) -> None:
+        """Set the SysEx device ID. Not the MIDI channel: this instrument
+        has both and they are set in different places on it."""
+        def done(text) -> None:
+            if not text:
+                return
+            try:
+                value = int(text)
+            except ValueError:
+                self.notify_status(f"{text!r} is not a number", refused=True)
+                return
+            if not 0 <= value <= 15:
+                self.notify_status("a device ID is 0-15", refused=True)
+                return
+            self.device.device_id = value
+            self._remember_device_id(value)
+            self.notify_status(f"device ID {value}")
+
+        self.push_screen(
+            PromptScreen("SysEx device ID (0-15), not the MIDI channel:",
+                         str(getattr(self.device, "device_id", 0))), done)
+
+    def _remember_device_id(self, value: int) -> None:
+        if self._config_path is None:
+            return
+        from emu import config
+
+        try:
+            config.save_device_id(value, self._config_path)
+        except OSError:
+            pass
+
+    def action_pick_channel(self) -> None:
+        def apply(text):
+            if not text:
+                return
+            try:
+                value = int(text)
+            except ValueError:
+                self.notify_status(f"{text!r} is not a number", refused=True)
+                return
+            if not 1 <= value <= 16:
+                self.notify_status("MIDI channels are 1-16", refused=True)
+                return
+            self._set_channel(value - 1)
+
+        self.push_screen(
+            PromptScreen("MIDI channel (1-16):", str(self._channel() + 1)),
+            apply)
+
+    def action_toggle_favorite(self) -> None:
+        """Mark or unmark the slot under the cursor. Sends no MIDI."""
+        if self.favorites is None:
+            self.notify_status("no favourites database")
+            return
+        table = self.query_one("#slot-table", DataTable)
+        row = table.cursor_row
+        if not self._current or row is None or row >= len(self._current):
+            return
+        entry = self._current[row]
+        # entry.bank_id, not self._current_bank. In the all-favourites view
+        # the rows come from every bank while the bank pane sits on one of
+        # them, so using the pane's bank favourited a slot the user was not
+        # looking at and left the one they were. _fill has always read the
+        # row's own bank; these did not.
+        bank_id = entry.bank_id
+        name = self.catalog.display_name(bank_id, entry.number)
+        # Favorites.toggle, not remove-then-add: un-favouriting keeps
+        # the row so a rating, tags, a note and the original date
+        # survive being toggled off and on. As a delete followed by a
+        # fresh add this destroyed all four, and this is one keystroke.
+        now = self.favorites.toggle(bank_id, entry.number, name=name)
+        self.notify_status(f"{'favourited' if now else 'unfavourited'} {name}")
+        self._refill_keeping_place()
+
+
+    def _favourite_under_cursor(self):
+        """The favourite row for the slot under the cursor, if there is one.
+
+        Tags and notes hang off a favourite, so there is nothing to attach
+        them to until `f` has been pressed. Saying so is better than
+        silently creating one: the user asked to annotate, not to favourite.
+        """
+        entry = self._cursor_entry()
+        if entry is None or self.favorites is None:
+            return None, None
+        # The row's bank, for the reason action_toggle_favorite gives: in
+        # the all-favourites view a tag or a note written against the bank
+        # pane's bank lands on a different slot than the one on screen.
+        bank_id = entry.bank_id
+        number = entry.number
+        return (bank_id, number), self.favorites.get(bank_id, number)
+
+    def action_edit_tags(self) -> None:
+        where, existing = self._favourite_under_cursor()
+        if where is None:
+            return
+        if existing is None:
+            self.notify_status("not a favourite yet -- press f first",
+                               refused=True)
+            return
+
+        def apply(value):
+            if value is None:
+                return
+            self.favorites.set_tags(where[0], where[1], value)
+            self._refill_keeping_place()
+            self.notify_status("tags set")
+
+        self.push_screen(PromptScreen("Tags (comma separated):",
+                                  existing.tags), apply)
+
+    def action_edit_note(self) -> None:
+        where, existing = self._favourite_under_cursor()
+        if where is None:
+            return
+        if existing is None:
+            self.notify_status("not a favourite yet -- press f first",
+                               refused=True)
+            return
+
+        def apply(value):
+            if value is None:
+                return
+            self.favorites.set_note(where[0], where[1], value)
+            self._refill_keeping_place()
+            self.notify_status("note set")
+
+        self.push_screen(PromptScreen("Note:", existing.note), apply)
+
+    def action_cycle_favorites(self) -> None:
+        """Step: all slots -> this bank's favourites -> every favourite.
+
+        Always exactly three steps, even when a view is empty: skipping one
+        to be helpful makes a keypress land somewhere different depending on
+        what happens to be favourited.
+        """
+        if self.favorites is None:
+            self.notify_status("no favourites database")
+            return
+        index = VIEW_CYCLE.index(self.view_mode)
+        self.view_mode = VIEW_CYCLE[(index + 1) % len(VIEW_CYCLE)]
+        self._refill_keeping_place()
+        shown = len(self._current)
+        if self.view_mode == VIEW_ALL:
+            self.notify_status(VIEW_LABELS[self.view_mode])
+        elif not shown:
+            where = ("this bank" if self.view_mode == VIEW_BANK_FAVOURITES
+                     else "any bank")
+            self.notify_status(
+                f"{VIEW_LABELS[self.view_mode]} - nothing favourited in "
+                f"{where} yet")
+        else:
+            self.notify_status(f"{VIEW_LABELS[self.view_mode]} - {shown}")
+
+    def _refill_keeping_place(self) -> None:
+        table = self.query_one("#slot-table", DataTable)
+        row = table.cursor_row or 0
+        self._fill(self._current_bank)
+        if self._current:
+            table.move_cursor(row=min(row, len(self._current) - 1))
+
+    def _fill(self, bank_id: str) -> None:
+        table = self.query_one("#slot-table", DataTable)
+        self._current_bank = bank_id
+        self._current = self._visible(bank_id)
+        marked = self._favorite_keys(bank_id)
+        self._filling = True
+        try:
+            table.clear()
+            for entry in self._current:
+                name = self.catalog.display_name(entry.bank_id,
+                                                 entry.number)
+                if self.catalog.differs(entry.bank_id, entry.number):
+                    shown = f"[b]{name}[/b] [dim]*[/dim]"
+                elif self.catalog.is_live(entry.bank_id,
+                                          entry.number):
+                    shown = f"[b]{name}[/b]"
+                else:
+                    shown = name
+                here = (self._favorite_keys(entry.bank_id)
+                        if self.view_mode == VIEW_ALL_FAVOURITES else marked)
+                table.add_row(
+                    "[b]♥[/b]" if entry.number in here else "",
+                    f"{entry.number:03d}", shown,
+                    str(entry.index),
+                    key=entry.key)
+        finally:
+            self._filling = False
+        self._detail(0)
+
+    def _detail(self, row: int) -> None:
+        if not self._current or row >= len(self._current):
+            self.query_one("#detail", Static).update("")
+            return
+        entry = self._current[row]
+        name = self.catalog.display_name(entry.bank_id, entry.number)
+        source = ("read from the unit"
+                  if self.catalog.is_live(entry.bank_id, entry.number)
+                  else "from the catalog")
+        if entry.region.needs_card:
+            source += " · needs a card fitted"
+        if entry.kind == banks.Kind.PRESET:
+            bank = banks.bank_of(entry.kind, entry.index)
+            how = (f"Bank Select (CC32) [b]{bank}[/b] · Program Change "
+                   f"[b]{entry.number}[/b] [dim](under the default "
+                   f"Program Map)[/dim]")
+        elif entry.kind == banks.Kind.MIDIMAP:
+            how = ("[dim]no program change reaches a midimap; System "
+                   "Exclusive is the only way[/dim]")
+        else:
+            how = ("[dim]selected as a preset in the hyperpreset "
+                   "range[/dim]")
+        self.query_one("#detail", Static).update(
+            f"[b]{entry.display}[/b]  {name}   [dim]index "
+            f"{entry.index}[/dim]\n{how} · {source}"
+        )
+
+    def notify_status(self, message: str, *, refused: bool = False) -> None:
+        prefix = "[b]refused[/b] · " if refused else ""
+        self.query_one("#status", Static).update(prefix + message)
+
+    # --- navigation ---------------------------------------------------------
+
+    def on_data_table_row_highlighted(self, event) -> None:
+        if self._filling:
+            return
+        if event.data_table.id == "bank-table":
+            row = event.cursor_row
+            if 0 <= row < len(self._bank_ids):
+                self._fill(self._bank_ids[row])
+        elif event.data_table.id == "slot-table":
+            self._detail(event.cursor_row)
+
+    def on_data_table_row_selected(self, event) -> None:
+        """Enter on a slot. It arrives here, not as a binding."""
+        if event.data_table.id == "slot-table":
+            self.action_select()
+
+    def action_switch_pane(self) -> None:
+        left = self.query_one("#bank-table", DataTable)
+        right = self.query_one("#slot-table", DataTable)
+        (right if left.has_focus else left).focus()
+
+    # --- operations ---------------------------------------------------------
+
+    def action_select(self) -> None:
+        table = self.query_one("#slot-table", DataTable)
+        row = table.cursor_row
+        if not 0 <= row < len(self._current):
+            return
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        entry = self._current[row]
+        if entry.kind != banks.Kind.PRESET:
+            # Refused here rather than in the worker, so that nothing is
+            # sent at all. A midimap has no program change; a program
+            # change aimed at one would land on a preset instead.
+            self.notify_status(
+                f"a {entry.kind} is not selected with a program change; "
+                f"only presets are", refused=True)
+            return
+        # Set here, not in the worker. A @work(thread=True) method returns
+        # at once and would set the flag on its own thread, so two quick
+        # presses both passed this check before either worker ran.
+        self._busy = True
+        self._select_worker(entry)
+
+    @work(thread=True)
+    def _select_worker(self, entry: banks.Slot) -> None:
+        """**MIDI only.** The caller set ``_busy``; this clears it."""
+        try:
+            with self._lock:
+                self.device.select(entry)
+        except Exception as exc:
+            self.call_from_thread(
+                self.notify_status, f"select: {exc}", refused=True)
+            return
+        finally:
+            self._busy = False
+        self.call_from_thread(
+            self.notify_status,
+            f"selected {entry.display} — Bank Select (CC32) "
+            f"{banks.bank_of(entry.kind, entry.index)} then Program Change "
+            f"{entry.number} on channel {self.device.channel + 1}; "
+            f"that number reaches it under the default Program Map")
+
+    def action_read_names(self) -> None:
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        entry = banks.region(self._current_bank)
+        self._busy = True          # main thread; see action_select
+        self._read_worker(entry.kind)
+
+    @work(thread=True)
+    def _read_worker(self, kind: str) -> None:
+        """**MIDI only** -- the catalog is updated on the main thread.
+
+        One request for the whole kind. The caller set ``_busy``; this
+        clears it.
+        """
+        try:
+            self.call_from_thread(
+                self.notify_status,
+                f"asking for every {kind} name in one message (silent)...")
+            with self._lock:
+                names = self.device.names(kind)
+        except Exception as exc:
+            self.call_from_thread(
+                self.notify_status, f"read: {exc}", refused=True)
+            return
+        finally:
+            self._busy = False
+        self.call_from_thread(self._adopt_kind, kind, names)
+
+    def _adopt_kind(self, kind: str, names) -> None:
+        """File a flat list of names back into the regions it spans.
+
+        The reply is "every preset, in the order they appear" -- one list
+        across RAM, ROM and card. Splitting it by region here is the only
+        place that mapping exists, and it has to skip the regions a
+        missing card leaves out, which is why it walks the returned length
+        rather than the declared one.
+        """
+        adopted = 0
+        cursor = 0
+        for region in banks.regions(kind):
+            for number in range(region.count):
+                if cursor >= len(names):
+                    break
+                self.catalog.set_live_name(region.id, number,
+                                           names[cursor].rstrip())
+                cursor += 1
+                adopted += 1
+        if self.favorites is not None:
+            self.favorites.refresh_names(
+                lambda bank, number: self.catalog.live_name(bank, number))
+        self._fill(self._current_bank)
+        short = ""
+        expected = sum(r.count for r in banks.regions(kind))
+        if adopted < expected:
+            short = (f"; {expected - adopted} short of {expected}, which "
+                     f"is what no card fitted looks like")
+        self.notify_status(f"read {adopted} {kind} name(s){short}")
+
+    def action_search(self) -> None:
+        def done(text) -> None:
+            if not text:
+                return
+            hits = self.catalog.search(text)
+            if not hits:
+                self.notify_status(f"nothing matching {text!r}")
+                return
+            lines = [f"{len(hits)} match(es) for {text!r}", ""]
+            for bank_id, program_change, name in hits[:400]:
+                try:
+                    entry = banks.slot(bank_id, program_change)
+                except LookupError:
+                    continue
+                lines.append(f"{entry.display:<6} {name:<12} "
+                             f"PC {entry.number:>3}")
+            if len(hits) > 400:
+                lines.append(f"... and {len(hits) - 400} more")
+            self.push_screen(ReportScreen("Search", "\n".join(lines)))
+
+        self.push_screen(PromptScreen("Search names:"), done)
+
+    def action_device_info(self) -> None:
+        self._info_worker()
+
+    @work(thread=True)
+    def _info_worker(self) -> None:
+        """**MIDI only** -- the report is built on the main thread."""
+        try:
+            with self._lock:
+                version = self.device.version()
+                try:
+                    configuration = self.device.configuration()
+                except Exception:
+                    configuration = None
+        except Exception as exc:
+            self.call_from_thread(
+                self.notify_status, f"device: {exc}", refused=True)
+            return
+        self.call_from_thread(self._show_info, version, configuration)
+
+    def _show_info(self, version, configuration) -> None:
+        lines = [f"connection      {self.device.description}",
+                 f"device ID       {self.device.device_id}",
+                 f"MIDI channel    {self.device.channel + 1}", ""]
+        lines.append("manufacturer    "
+                     + f"{msg.EMU_ID:02X}  (E-mu)")
+        lines.append(f"product         {msg.MORPHEUS_ID:02X}  (Morpheus)")
+        lines.append("version bytes   "
+                     + " ".join(f"{b:02X}" for b in version))
+        if configuration is not None:
+            lines.append("configuration   "
+                         + " ".join(f"{b:02X}" for b in configuration))
+        lines.append("")
+        lines.append("The device ID and the MIDI channel are different")
+        lines.append("things and are set in different places on the unit.")
+        lines.append("A request with the wrong device ID is answered with")
+        lines.append("silence, which looks exactly like a wrong cable.")
+        lines.append("")
+        lines.append("The last byte of a version reply may be a checksum;")
+        lines.append("whether unnumbered replies carry one is not")
+        lines.append("established. See TODO item 1.")
+        lines.append("")
+        lines.append(f"catalog         {len(self.catalog)} names"
+                     + (f" from {self.catalog.source}"
+                        if self.catalog.source else ""))
+        lines.append("favourites      "
+                     + (f"{len(self.favorites)}"
+                        if self.favorites is not None else "(none open)"))
+        self.push_screen(ReportScreen("Device", "\n".join(lines)))
+
+    def action_help(self) -> None:
+        self.push_screen(ReportScreen("emorphed", _HELP))
+
+
+_HELP = """What the Morpheus holds
+
+  Presets       RAM 0-127 (yours), ROM 128-255, card 256-383.
+  Hyperpresets  RAM 0-127, card 128-255. Each stacks up to 16 zones
+                of presets across the keyboard.
+  Midimaps      RAM 0-15, card 16-31. One preset per MIDI channel --
+                and **no program change reaches a midimap at all**.
+                System Exclusive is the only way in.
+
+Two regions need a card fitted. A request for one without a card is
+ignored outright, so a read that comes back short is saying "no card",
+not failing.
+
+Numbers
+
+An *index* is what SysEx addresses. A *program change* is what selects,
+and only for presets -- a Program Map sits between the two, so the number
+shown is the one that works under the default map. Bank Select is
+Controller 32 with Controller 0 held at zero.
+
+Names
+
+`r` reads every name of the current kind in **one** message, which this
+instrument can do and its siblings cannot. Names read from the unit show
+in bold; a `*` marks a slot where the unit and the catalog disagree.
+
+Keys
+
+  ↑↓        move; this never sends anything
+  tab       switch pane
+  ⏎         select on the unit -- presets only
+  r         read every name of this kind (silent, one message)
+  /         search the names
+  [ ]       previous / next MIDI channel
+  c         set the MIDI channel
+  d         set the SysEx device ID -- a different thing
+  f         favourite the slot under the cursor
+  F         all slots / favourites here / every favourite
+  t n       tags, note
+  i         what the unit says it is
+  q         quit
+"""
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="emorphed",
+        description="Browse an E-mu Morpheus.")
+    parser.add_argument("--port")
+    parser.add_argument("--recv-port")
+    parser.add_argument("--demo", action="store_true",
+                        help="built-in demo device; opens no MIDI ports")
+    parser.add_argument("--device-id", type=int, default=None,
+                        help="SysEx device ID 0-15; not the MIDI channel")
+    parser.add_argument("--midi-channel", type=int, default=None,
+                        help="the unit's global channel, 1-16")
+    parser.add_argument("--catalog", default=None)
+    parser.add_argument("--config", default=None,
+                        help="settings cache (default: ./config.toml)")
+    parser.add_argument("--favorites", default=None,
+                        help="favourites database (default: "
+                             "the per-platform data directory)")
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
+    from emu import config as cfg
+
+    config_path = getattr(args, "config", None) or cfg.DEFAULT_PATH
+    if args.midi_channel is not None and not 1 <= args.midi_channel <= 16:
+        sys.exit("error: --midi-channel is 1-16")
+    if args.device_id is not None and not 0 <= args.device_id <= 15:
+        sys.exit("error: --device-id is 0-15")
+
+    if args.demo:
+        from emorphed.demo import DemoDevice
+
+        device = DemoDevice()
+    else:
+        from emu import bridge as b
+
+        # The channel on the command line wins; otherwise the one used last
+        # time, so it does not have to be given again every run.
+        remembered = cfg.load_channel(config_path)
+        try:
+            channel = ((args.midi_channel - 1) if args.midi_channel
+                       else (remembered if remembered is not None else 0))
+            device_id = (args.device_id if args.device_id is not None
+                         else (cfg.load_device_id(config_path) or 0))
+            if args.port:
+                device = b.MorpheusBridge.open(
+                    args.port,
+                    recv_port=(args.recv_port
+                               or cfg.load_last_recv_port(config_path)),
+                    device_id=device_id, channel=channel)
+            else:
+                device = b.MorpheusBridge.autodetect(
+                    on_try=lambda n: print(f"  probing {n}...",
+                                           file=sys.stderr))
+        except Exception as exc:
+            sys.exit(f"error: {exc}")
+
+        # Remember whatever channel is actually in use -- which after an
+        # autodetect is the one the unit reported, not the one asked for.
+        try:
+            cfg.save_channel(getattr(device, "channel", 0), config_path)
+            if getattr(device, "port", None):
+                cfg.save_last_port(device.port, config_path)
+                cfg.save_device_id(device.device_id, config_path)
+            recv = getattr(device, "recv_port", None)
+            if recv and recv != getattr(device, "port", None):
+                cfg.save_last_recv_port(recv, config_path)
+        except OSError:
+            pass
+
+    from emu.favorites import Favorites
+
+    try:
+        store = Favorites(args.favorites)
+    except Exception as exc:
+        # _migrate refuses a database written by a newer build, which is the
+        # right refusal, and sqlite3 raises on a file that is not a database
+        # at all. Every other startup failure here leaves by sys.exit; these
+        # two used to print a traceback.
+        raise SystemExit(f"error: {exc}")
+    app = EmorphedApp(device, catalog=cat.load(args.catalog),
+                      favorites=store, config_path=config_path)
+    try:
+        app.run()
+    finally:
+        store.close()
+        device.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

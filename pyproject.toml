@@ -8,15 +8,10 @@ version = "0.1.0"
 description = "A terminal browser for the E-mu Morpheus"
 requires-python = ">=3.11"
 license = { text = "GPL-2.0-or-later" }
-# python-rtmidi only; bridge imports it lazily and the CLI runs without
-# it. Textual arrives with the browser -- see TODO item 5 -- and is an
-# extra until then rather than a download for a program with no TUI.
-dependencies = ["python-rtmidi>=1.4"]
-
-[project.optional-dependencies]
-tui = ["textual>=0.40"]
+dependencies = ["textual>=0.40", "python-rtmidi>=1.4"]
 
 [project.scripts]
+emorphed = "emorphed.app:main"
 morphcli = "emorphed.cli:main"
 
 [tool.setuptools.packages.find]

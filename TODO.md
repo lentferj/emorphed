@@ -68,15 +68,24 @@ change at all** -- SysEx is the only way. That last fact is the strongest
 argument for giving them a pane, since the front panel is the only other
 route.
 
-## 5. There is no TUI yet
+## 5. The browser — DONE 2026-09-20
 
-**Status:** open.
+Two panes, the sibling shape: regions left, that region's contents
+right. Favourites with tags and notes, the `F` cycle, search, channel
+keys, and a device screen.
 
-`morphcli` does the reading. The Textual browser the siblings have --
-two panes, favourites, tags, notes, the F cycle -- is not written. The
-shared modules it needs are ported and working.
+What is specific to this instrument: `r` reads **every name of a kind in
+one message**, which no sibling can do, and files the flat reply back
+across the regions it spans -- a short reply is reported as "no card
+fitted", which is what it means. Enter refuses hyperpresets and midimaps
+before sending, since no program change reaches a midimap at all. The
+slot pane shows the SysEx *index* beside the displayed number, and the
+status line says the program number it used is the one that works under
+the default Program Map. `d` sets the SysEx device ID, which this
+instrument has in addition to a MIDI channel and which the siblings do
+not need.
 
-Should follow item 1, so `⏎` has something real to send to.
+Textual is a real dependency again rather than the extra ER-8 made it.
 
 ## 6. Nothing writes, and adding a write is a decision
 
@@ -312,6 +321,34 @@ That is the bench's question, not the review's.
   remains open and unmeasured from both directions.
 
 ## 8. `tools/extract_catalog.py` does not exist
+
+## ER-F1 — the bool sweep stopped at `device_id`; `load_channel` has the same bug (external review follow-up — GLM-5.3-Flash, 2026-09-20)
+
+**Status:** open, verified live in six projects.
+
+The ER-3 fix added the correct bool guard to `load_device_id` — verified
+live: a hand-edited `device_id = true` now comes back as `None` in both
+this project and ensqsqed, with the comment naming why
+(`isinstance(True, int)` is True).
+
+**`load_channel`, one function away in the same file, was not swept.** It
+still reads `isinstance(value, int) and 0 <= value <= 15`, which passes for
+`True`: `channel = true` in TOML returns `True`, every downstream range
+check passes (`0 <= True <= 15` is true), and the wire effect is real —
+`select_messages(slot, True)` emits status `0xC1`, which is **MIDI channel
+2**, not channel 1. Verified live against this checkout, and the same
+unfixed form is in `ensqsqed/sq/config.py`, `kwsed/kws/config.py:129`,
+`p2ked/p2k/config.py:130`, `x5ded/x5/config.py:129` and
+`nanosyned/nano/config.py:130`. rxved carries its channel logic in its
+bridge with its own panel-number range and needs the same check in its own
+terms.
+
+The failure mode is the one the new `load_device_id` comment itself
+describes — a hand-edited value taking a plausible wrong form — one
+function from where it was just fixed. The sweep that propagated the
+device-ID guard to six projects should run for the channel loader too;
+`load_last_recv_port`'s `and value` truthiness check is of the same shape
+and worth a glance while there.
 
 **Status:** open, noticed by the review under ER-1.
 
