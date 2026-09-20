@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emorphed"
+version = "0.1.0"
+description = "A terminal browser for the E-mu Morpheus"
+requires-python = ">=3.11"
+license = { text = "GPL-2.0-or-later" }
+dependencies = ["textual>=0.40", "python-rtmidi>=1.4"]
+
+[project.scripts]
+morphcli = "emorphed.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["emu*", "emorphed*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
