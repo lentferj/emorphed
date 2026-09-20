@@ -24,7 +24,7 @@ Three kinds of thing, each numbered in its own space:
 kind           numbers                    a bank is
 =============  =========================  ====================
 preset         0-127 RAM, 128-255 ROM,    128 presets
-               256-319 CARD
+               256-383 CARD
 hyperpreset    0-127 RAM, 128-255 CARD    128 hyperpresets
 midimap        0-15 RAM, 16-31 CARD       16 midimaps
 =============  =========================  ====================
@@ -245,10 +245,12 @@ def bank_request(kind: str, bank: int, *, device: int = 0) -> bytes:
     """Ask for a whole bank of one kind."""
     if kind not in Kind.ALL:
         raise LookupError(f"no kind {kind!r}; have {', '.join(Kind.ALL)}")
+    if kind == Kind.PRESET:
+        # The one the tests pin; built in one place rather than two.
+        return m.preset_bank_request(bank, device=device)
+    number = m.BANK_REQUEST_BASE + bank
     return m.frame(Kind.REQUEST[kind],
-                   [(m.BANK_REQUEST_BASE + bank) & 0x7F,
-                    ((m.BANK_REQUEST_BASE + bank) >> 7) & 0x7F],
-                   device=device)
+                   [number & 0x7F, (number >> 7) & 0x7F], device=device)
 
 
 def select_messages(target: Slot, channel: int = 0) -> List[bytes]:

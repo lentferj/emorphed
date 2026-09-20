@@ -120,6 +120,10 @@ def _cmd_read(_device, args) -> None:
     print(f"{args.file}: {library.summary()}")
     for line in library.corrupt[:10]:
         print(f"  !! {line}")
+    if len(library.corrupt) > 10:
+        # Saying "and 30 more" matters: ten lines followed by a table of
+        # the survivors reads as "mostly fine" when it is not.
+        print(f"  !! ...and {len(library.corrupt) - 10} more")
     names = library.names(args.kind)
     if names:
         rows = [[f"{n:03d}", text.rstrip()] for n, text in
@@ -191,7 +195,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             try:
                 if args.port:
                     device = b.MorpheusBridge.open(
-                        args.port, recv_port=args.recv_port,
+                        args.port,
+                        recv_port=(args.recv_port
+                                   or config.load_last_recv_port(
+                                       config_path)),
                         device_id=device_id, channel=channel)
                 else:
                     device = b.MorpheusBridge.autodetect(
@@ -201,6 +208,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if getattr(device, "port", None):
                         config.save_last_port(device.port, config_path)
                         config.save_device_id(device.device_id, config_path)
+                    recv = getattr(device, "recv_port", None)
+                    if recv and recv != getattr(device, "port", None):
+                        config.save_last_recv_port(recv, config_path)
                 except OSError:
                     pass
             except Exception as exc:
@@ -208,7 +218,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         result = COMMANDS[args.command](device, args)
-    except (LookupError, TimeoutError, ValueError, RuntimeError) as exc:
+    except (LookupError, TimeoutError, ValueError, RuntimeError,
+            OSError) as exc:
+        # OSError because `read` is the one command that opens a path the
+        # user typed. Its whole pitch is telling them a file is damaged
+        # rather than wrong; a missing one deserves the same sentence.
         raise SystemExit(f"error: {exc}")
     finally:
         if device is not None:

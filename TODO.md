@@ -103,3 +103,241 @@ folder in this collection. Decoding it once would serve rxved, kwsed,
 p2ked, x5ded, nanosyned, ensqsqed and this one alike.
 
 **Blocked on:** nothing but the decoding.
+
+---
+
+# External code review — GLM-5.3-Flash (2026-09-20)
+
+**Status:** findings only, no code changed. A full read of `emu/`,
+`emorphed/`, `tests/`, `docs/` and the project metadata; the test suite was
+run (30 passed). Everything below was verified at its site first-hand. What
+is already known and documented — the bridge never having talked to the
+unit (item 1), `PRESET_GAP` being a guess (item 3), the 256-319/384 manual
+contradiction (item 2) — is not repeated here as a finding. The README's
+sibling-convention framing is taken as given.
+
+*Every finding below was re-verified at its site before being acted on.
+All nine held. Two of them were worse than reported: ER-1's rot is in
+three projects, not one, and the test ER-3 asked for immediately found a
+real bug in six.*
+
+## ER-1 — `catalog.py` described a different instrument — FIXED
+
+**Confirmed, and worse than reported.** The module was ported with `sed`,
+which renamed identifiers and left every word of the prose alone: the X5
+family, `p2k/data/catalog.json`, "all hundred at once", 640 presets,
+Korg's patch list, a 2026-09-12 session that belongs to another project,
+and a reference to an `app.py` that does not exist.
+
+**The same rot is in `nanosyned` and `ensqsqed`**, which came off the
+same `sed`. All three docstrings are rewritten for their own instrument,
+and each now says what a catalog is actually *for* there -- which differs:
+here the unit hands over every name in one exchange, so a catalog is for
+working away from it; in nanosyned four of five banks can come from
+nowhere else.
+
+`tools/` being empty is now TODO item 8.
+
+## ER-2 — checksum handling is asymmetric — DOCUMENTED, still a bench question
+
+**Confirmed.** `parse` strips the trailing byte only for the three
+numbered data messages. Whether an unnumbered reply carries a checksum at
+all is asserted nowhere, and the review is right that the fixtures bake
+in the assumption that it does not.
+
+Not guessed at. `Packet.body` now says in its docstring exactly what is
+stripped, what is not, and why -- and item 1 gains the bench step. The
+alternative was to strip uniformly on a hunch, which would silently eat a
+real data byte from every Version reply if the hunch were wrong.
+
+## ER-3 — the largest modules had no tests — FIXED, and it found a bug
+
+**Confirmed.** `tests/test_protocol.py` imported three modules; `favorites`
+(601 lines), `config` and `catalog` had none.
+
+`tests/test_store.py` now covers the behaviours the review named: the
+upsert preserving `added`, the `active` soft delete and the v1 migration,
+`toggle`'s restore-on-re-add, `_merge` keeping tags across a rating edit,
+LIKE escaping, `refresh_names`' change count, TOML quoting, and the
+catalog's disagreement reporting.
+
+**One of those tests failed on the first run.** `load_device_id` accepted
+TOML `device_id = true` as device 1, because `isinstance(True, int)`. That
+guard was written for p2ked weeks ago and never propagated: **six of the
+seven projects were missing it.** All six are fixed, rxved with its own
+range because its device ID is the panel number 17-32, where 1 is not
+merely wrong but impossible.
+
+The two docstrings citing `--favorites` and "the browser" are reworded.
+
+## ER-4 — `banks.py` contradicted itself in its own front matter — FIXED
+
+**Confirmed.** The docstring table said 256-319 while the code eleven
+lines below argued for 256-383 and the tests, README and RESOLUTION_NOTES
+agreed with the code. The table now says 383.
+
+## ER-5 — the catalog keyed names on `program_change` — FIXED
+
+**Confirmed, and the reasoning is right.** This project makes the
+index-versus-program-number distinction a headline and then named the
+catalog's key after the assumption. Renamed to `number`, matching
+`Slot.number`, with a comment saying why the other name would have
+enshrined it.
+
+## ER-6 — `--recv-port` was accepted and never remembered — FIXED
+
+**Confirmed**: the pair existed, was exported, and had no caller. `main`
+now saves it when it differs from the output port and offers it back when
+`--recv-port` is not given.
+
+## ER-7 — a missing file gave a traceback — FIXED
+
+**Confirmed.** `OSError` is now caught with the rest, with a comment
+saying why `read` in particular needs it.
+
+## ER-8 — `textual` was a hard dependency for a program with no TUI — FIXED
+
+**Confirmed**: required unconditionally, imported nowhere. Moved to an
+optional `[tui]` extra, to come back as a dependency when item 5 lands.
+
+## ER-9 — minor — ALL FIXED
+
+* `signed` is exported.
+* `to_words` raises instead of masking, matching `from_words` and
+  `encode_name`. A value past the range was silently becoming a different,
+  entirely plausible value on the wire -- the exact failure this module is
+  written to avoid.
+* `banks.bank_request` delegates the preset case to
+  `messages.preset_bank_request`.
+* `DemoDevice._tick` raises after `close()`.
+* `morphcli read` says how many corrupt dumps it did not list.
+
+## What was checked and found sound
+
+For the record, since this is the part a future reviewer would redo:
+the 2176 + 512 + 64 = 2752 figure across README, TODO and
+RESOLUTION_NOTES §3 is internally consistent (preset + hyperpreset +
+midimap dumps), not a doc drift; `PRESET_DATA_BYTES = 566` is the total
+message length including `F0`/`F7` and the fixture test agrees;
+`dumps.read_bytes`' corrupt-vs-kept policy (bad checksums kept and
+*reported*, not dropped) is right for a format whose one integrity check
+would otherwise be wasted; the `active` soft-delete migration,
+`_LockedConnection`'s lock-and-fetch-everything contract, the XDG
+`data_dir` fallback chain, `_toml_string`'s escaping rationale, and
+`autodetect`'s ID-0-first sweep order are all sound designs worth keeping
+exactly as they are.
+
+## Cross-check against edisyn's Morpheus implementation (GLM-5.3-Flash, 2026-09-20)
+
+`~/git-repos/edisyn` ships a hardware-proven Morpheus implementation
+(`edisyn/synth/emumorpheus/`, Java, since 2020). It is **Apache-2.0** and
+emorphed is **GPL-2.0-or-later** — different licences, so nothing was
+copied or quoted into emorphed and nothing below is a patch: the protocol
+FACTS below were read off that implementation and recorded here for the
+bench to verify at item 1. Every one of them is checkable without reading
+any of edisyn again.
+
+**Agreements — the protocol core is now independently corroborated:**
+
+* All three data sizes match exactly, and edisyn's arithmetic (`recognize`
+  asserts `length == 10 + NUM_PARAMETERS * 2`) shows the ten bytes are
+  `F0 18 0C id cmd version NNlo NNhi checksum F7` — the same shape
+  emorphed's `Command.SIZES` encode: preset 10 + 278×2 = **566**,
+  hyperpreset 10 + 237×2 = **484**, midimap 10 + 360×2 = **730**. All three
+  agree.
+* Checksum: edisyn computes it over the **data bytes only** (name + words,
+  *excluding* the version byte and the object number) and places it before
+  the `F7` — the same scope `dumps.read_bytes` assumes. Its comment is
+  also corroboration from the other direction: "The manuals do NOT say how
+  to calculate the checksum. But it appears to be simply the sum of the
+  parameter bytes" — the same gap RESOLUTION_NOTES §3 fills by measurement.
+* Word order (low seven first) and the sign rule (`val >= 8192` →
+  `val - 16384`, i.e. two's complement to bit 13) are identical to
+  `messages.to_words`/`messages.signed`. Names are 12 × 14-bit words in
+  dumps. Command IDs for preset/hyperpreset/midimap request-and-data pairs
+  (0x00/0x01, 0x44/0x45, 0x46/0x47) and the version byte on the data
+  messages all agree.
+* edisyn does **not** validate incoming checksums and does not use the
+  bank request, the List Requests, or the Version/Configuration Requests —
+  so emorphed's read path is *stronger* there, and those parts stay
+  manual-only (item 1 still has to confirm them on hardware).
+
+**One real discrepancy found — the card's bank number when SELECTING:**
+
+edisyn's patch-select (its `changePatch`) sends the bank as a 14-bit
+controller pair on CC 0 (MSB) + CC 32 (LSB) — the same wire shape as the
+manual's `Bn 00 00 20 bb Cn pp`, so emorphed's `select_messages` format is
+confirmed — but for the card it bumps the bank: the comment says the card's
+actual bank is **bank 3**, not 2. emorphed sends
+`bank_of(index) = index // 128` = **2** for every P-CARD preset. If edisyn
+is right, selecting a card preset in emorphed lands one bank off.
+
+This does not contradict the 256-383 dump resolution — edisyn's *dump*
+addressing is also `bank * 128 + number` with the card at bank 2 — it
+reveals a THIRD numbering: the CC/PC bank select value, where the card
+sits at 3. Which is exactly this instrument's "numbered three different
+ways" habit, and it refines item 2: the manual's "256-319" and "banks
+0-2" sentences disagree about count, but the *select* bank may disagree
+with both. The planned bench test gains a step: select a card preset and
+see whether bank 2 or bank 3 reaches it.
+
+Caveat worth keeping: edisyn's class covers the **UltraProteus** in the
+same file, so the bump could in principle be an UltraProteus-ism applied
+unconditionally. Its comment does not say which machine it was proven on.
+That is the bench's question, not the review's.
+
+**Secondary observations:**
+
+* edisyn reads Instrument/Filter List Data replies as a 14-bit count then
+  entries of (14-bit index, 12 **raw** bytes) — names in list replies are
+  raw bytes, matching `parse_name_list`'s reading, and it consumes no
+  checksum and (commented out) no terminator in those replies. Weak
+  corroboration for ER-2's suspicion that unnumbered data replies carry no
+  checksum — weak because it reads to end-of-file and ignores trailing
+  bytes either way. The Effect List is nested (name, then a 14-bit count,
+  then 11-character subnames and 14-bit values) — a richer structure than
+  `parse_name_list` handles, which is fine for now but worth a line in the
+  protocol notes if the browser ever lists effects.
+* edisyn sends a command **0x22** (a preset-write variant, unused in its
+  current flow) that is not in `Command.NAMES`. Harmless for a read-only
+  program — such a message would land in `Library.other` — but worth
+  adding to the table once the manual confirms it, since `morphcli read`
+  currently prints it as "command 0x22".
+* edisyn sends product ID `0x0C` for the **UltraProteus as well** —
+  suggesting the UltraProteus also answers to the Morpheus ID (or that its
+  UltraProteus support assumed it). Low priority for emorphed, but it
+  means the "answers to 04 as well" story may have a sibling case.
+* No pacing anywhere in edisyn's Morpheus code — it writes one preset at
+  a time on user action, so it never had to measure the gap. TODO item 3
+  remains open and unmeasured from both directions.
+
+## 8. `tools/extract_catalog.py` does not exist
+
+**Status:** open, noticed by the review under ER-1.
+
+`.gitignore` and `catalog.load`'s warning both point at it and `tools/`
+is empty. The same shape as nanosyned's: `--syx` for what a dump can
+supply, `--manual` for the regions it cannot.
+
+It matters less here than in the siblings, because this instrument hands
+over every preset name in one exchange. It matters at all because two
+regions need a card fitted and a card is not always in.
+
+## 9. The card's bank number when *selecting* may be 3, not 2
+
+**Status:** open, a bench question, raised by the edisyn cross-check.
+
+`select_messages` sends `bank_of(index) = index // 128`, which is 2 for
+every P-CARD preset. A hardware-proven implementation elsewhere bumps the
+card to bank **3** on the Controller 0/32 pair while addressing the same
+preset as bank 2 in *dumps* -- which would make this instrument's habit
+of numbering things three different ways into a fourth.
+
+If that is right, selecting a card preset from emorphed lands one bank
+off. If it is an UltraProteus-ism applied unconditionally, it is right to
+ignore. Nothing here can tell without a Morpheus and a card.
+
+**The bench step:** select a card preset with bank 2, then with bank 3,
+and see which one arrives.
+
+**Blocked on:** item 1, and a card.

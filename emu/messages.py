@@ -56,7 +56,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 __all__ = [
     "SYSEX_START", "SYSEX_END", "EMU_ID", "MORPHEUS_ID", "PROTEUS_ID",
     "Command", "ProtocolError", "Packet",
-    "frame", "parse", "to_words", "from_words", "checksum",
+    "frame", "parse", "to_words", "from_words", "checksum", "signed",
     "NAME_CHARS", "decode_name", "encode_name",
     "preset_request", "preset_bank_request", "hyperpreset_request",
     "midimap_request", "preset_list_request", "hyperpreset_list_request",
@@ -194,7 +194,14 @@ class Packet:
         self.version = version
         #: The object number a dump carries, or ``None``.
         self.number = number
-        #: The data bytes, without the header, the checksum or the F7.
+        #: The data bytes, without the header or the F7.
+        #:
+        #: **The trailing checksum is stripped only for the three numbered
+        #: data messages**, whose layout is documented and whose checksum
+        #: scope was measured over 2176 dumps. Whether an unnumbered reply
+        #: -- Version, Configuration, any of the List Data -- carries one
+        #: at all is not established, so its last byte is left here rather
+        #: than guessed away. See TODO item 1: it is a bench question.
         self.body = body
 
     @property
@@ -232,6 +239,14 @@ def to_words(values: Iterable[int]) -> bytes:
     """Fourteen-bit words to MIDI bytes, **least significant seven first**."""
     out = bytearray()
     for value in values:
+        # Strict, to match encode_name and from_words. Masking instead
+        # would turn a value past the fourteen-bit range into a different,
+        # entirely plausible value on the wire -- which is the failure this
+        # whole module is written to avoid.
+        if not -0x2000 <= value <= 0x3FFF:
+            raise ProtocolError(
+                f"{value} does not fit in a fourteen-bit word; the range "
+                f"is -8192 to 16383")
         word = value & 0x3FFF
         out.append(word & 0x7F)
         out.append((word >> 7) & 0x7F)

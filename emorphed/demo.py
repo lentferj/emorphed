@@ -72,6 +72,10 @@ class DemoDevice:
         self._closed = True
 
     def _tick(self) -> None:
+        if self._closed:
+            raise RuntimeError(
+                "this demo device is closed; a real bridge would be a "
+                "closed port and would fail less clearly")
         if self.latency:
             time.sleep(self.latency)
 
