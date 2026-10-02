@@ -17,17 +17,17 @@
 
 import ast
 import os
-from pathlib import Path
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from textual.widgets import DataTable
 
+from emorphed.app import VIEW_ALL_FAVOURITES, EmorphedApp
+from emorphed.demo import DemoDevice
 from emu import banks
 from emu import catalog as cat
 from emu import favorites as fav
-from emorphed.app import VIEW_ALL_FAVOURITES, EmorphedApp
-from emorphed.demo import DemoDevice
 
 
 @pytest.fixture

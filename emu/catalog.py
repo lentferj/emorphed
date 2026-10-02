@@ -42,12 +42,12 @@ instrument whichever way it is done.
 from __future__ import annotations
 
 import json
-import sys
 import os
+import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
 
-__all__ = ["Entry", "Catalog", "load", "empty", "DEFAULT_PATH"]
+__all__ = ["DEFAULT_PATH", "Catalog", "Entry", "empty", "load"]
 
 DEFAULT_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "data", "catalog.json"
@@ -81,19 +81,19 @@ class Catalog:
         source: str = "",
         generated: str = "",
     ) -> None:
-        self._entries: Dict[str, Entry] = {}
+        self._entries: dict[str, Entry] = {}
         for entry in entries:
             self._entries[entry.key] = entry
-        self._live: Dict[str, str] = {}
+        self._live: dict[str, str] = {}
         self.source = source
         self.generated = generated
 
     # --- printed ------------------------------------------------------------
 
-    def entry(self, bank_id: str, number: int) -> Optional[Entry]:
+    def entry(self, bank_id: str, number: int) -> Entry | None:
         return self._entries.get(f"{bank_id}:{number:03d}")
 
-    def name(self, bank_id: str, number: int) -> Optional[str]:
+    def name(self, bank_id: str, number: int) -> str | None:
         found = self.entry(bank_id, number)
         return found.name if found is not None else None
 
@@ -112,7 +112,7 @@ class Catalog:
     def set_live_name(self, bank_id: str, number: int, name: str) -> None:
         self._live[f"{bank_id}:{number:03d}"] = name
 
-    def live_name(self, bank_id: str, number: int) -> Optional[str]:
+    def live_name(self, bank_id: str, number: int) -> str | None:
         return self._live.get(f"{bank_id}:{number:03d}")
 
     def is_live(self, bank_id: str, number: int) -> bool:
@@ -143,7 +143,7 @@ class Catalog:
 
     def disagreement(
         self, bank_id: str, number: int, writable: bool
-    ) -> Optional[str]:
+    ) -> str | None:
         """Why the unit and the catalog differ here, in words.
 
         ``None`` when they agree or the slot has not been read.
@@ -163,7 +163,7 @@ class Catalog:
 
     # --- search -------------------------------------------------------------
 
-    def search(self, needle: str) -> List[Tuple[str, int, str, bool]]:
+    def search(self, needle: str) -> list[tuple[str, int, str, bool]]:
         """Case-insensitive substring search over both sources.
 
         Each hit carries whether the unit and the printed list disagree
@@ -175,7 +175,7 @@ class Catalog:
         wanted = needle.strip().lower()
         if not wanted:
             return []
-        seen: Dict[str, Tuple[str, int, str]] = {}
+        seen: dict[str, tuple[str, int, str]] = {}
         for key, entry in self._entries.items():
             if wanted in entry.name.lower():
                 seen[key] = (entry.bank_id, entry.number, entry.name)
@@ -192,7 +192,7 @@ def empty() -> Catalog:
     return Catalog()
 
 
-def load(path: Optional[str] = None) -> Catalog:
+def load(path: str | None = None) -> Catalog:
     """Load the generated catalog, or an empty one.
 
     A missing catalog is normal and not an error: emorphed works without it,

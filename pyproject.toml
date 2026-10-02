@@ -52,38 +52,24 @@ select = ["E", "F", "I", "B", "S", "SIM", "UP", "C4", "PL", "RUF", "C901"]
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
-# Existing violations, suppressed per file so that `make check` passes on the
-# current code while new files and new code are still checked. Each entry lists
-# the rule codes that file already violates; see README "Development checks".
+# Rules ruff cannot auto-fix, suppressed per file. `S101` (assert) is allowed
+# in tests by design. See README "Development checks".
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
 "emorphed/app.py" = [
-    "B904", "E501", "F401", "I001", "PLC0415", "PLR2004", "PLW0108",
-    "RUF012", "RUF022", "SIM105", "UP006", "UP035", "UP045",
+    "B904", "PLC0415", "PLR2004", "PLW0108", "RUF012", "SIM105", "UP045",
 ]
 "emorphed/cli.py" = [
-    "B904", "B905", "C901", "E501", "F401", "I001", "PLC0415", "PLR0912",
-    "PLR2004", "RUF022", "UP006", "UP035", "UP045",
+    "B904", "B905", "C901", "PLC0415", "PLR0912", "PLR2004",
 ]
-"emorphed/demo.py" = ["F401", "UP006", "UP035", "UP045"]
-"emu/banks.py" = ["PLR2004", "RUF012", "RUF022", "UP006", "UP035", "UP045"]
-"emu/bridge.py" = [
-    "F401", "PLC0415", "PLR0913", "RUF022", "S110", "S112", "SIM105",
-    "UP006", "UP035", "UP037", "UP045",
-]
-"emu/catalog.py" = ["I001", "RUF022", "UP006", "UP035", "UP045"]
-"emu/config.py" = ["PLR2004", "PLW0603", "RUF022", "UP006", "UP031", "UP035", "UP045"]
-"emu/dumps.py" = ["RUF022", "UP006", "UP035", "UP045"]
-"emu/favorites.py" = [
-    "E501", "F401", "PLR0913", "PLR2004", "RUF022", "RUF023", "S608",
-    "UP006", "UP035", "UP037", "UP045",
-]
-"emu/messages.py" = [
-    "F401", "PLR2004", "RUF012", "RUF022", "RUF023", "UP006", "UP035", "UP045",
-]
-"tests/test_app.py" = ["I001", "PLR2004"]
-"tests/test_protocol.py" = ["I001", "PLR2004"]
-"tests/test_store.py" = ["F401", "I001", "PLC0415", "PLR2004"]
+"emu/banks.py" = ["PLR2004", "RUF012"]
+"emu/bridge.py" = ["PLC0415", "PLR0913", "S110", "S112", "SIM105"]
+"emu/config.py" = ["PLR2004", "PLW0603", "UP031"]
+"emu/favorites.py" = ["E501", "PLR0913", "PLR2004", "S608"]
+"emu/messages.py" = ["PLR2004", "RUF012"]
+"tests/test_app.py" = ["PLR2004"]
+"tests/test_protocol.py" = ["PLR2004"]
+"tests/test_store.py" = ["PLC0415", "PLR2004"]
 
 [tool.mypy]
 python_version = "3.11"

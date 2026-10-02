@@ -19,16 +19,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable, Sequence
 
-from emu import banks
+from emu import banks, config, dumps
 from emu import catalog as cat
-from emu import config
-from emu import dumps
-from emu import messages as m
 from emu.device import Device
 
-__all__ = ["main", "build_parser"]
+__all__ = ["build_parser", "main"]
 
 
 def _table(rows: Sequence[Sequence[str]], headers: Sequence[str]) -> str:
@@ -49,7 +46,7 @@ def _table(rows: Sequence[Sequence[str]], headers: Sequence[str]) -> str:
     return "\n".join(out)
 
 
-def _cmd_regions(_device: Optional[Device], _args: argparse.Namespace) -> None:
+def _cmd_regions(_device: Device | None, _args: argparse.Namespace) -> None:
     rows = []
     for entry in banks.regions():
         rows.append(
@@ -76,7 +73,7 @@ def _cmd_regions(_device: Optional[Device], _args: argparse.Namespace) -> None:
     )
 
 
-def _cmd_list(_device: Optional[Device], args: argparse.Namespace) -> None:
+def _cmd_list(_device: Device | None, args: argparse.Namespace) -> None:
     entry = banks.region(args.region)
     catalog = cat.load(getattr(args, "catalog", None))
     rows = []
@@ -143,7 +140,7 @@ def _cmd_select(device: Device, args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_read(_device: Optional[Device], args: argparse.Namespace) -> None:
+def _cmd_read(_device: Device | None, args: argparse.Namespace) -> None:
     """Read a .syx dump. No hardware."""
     library = dumps.read_file(args.file)
     print(f"{args.file}: {library.summary()}")
@@ -210,7 +207,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-COMMANDS: Dict[str, Callable[..., Optional[int]]] = {
+COMMANDS: dict[str, Callable[..., int | None]] = {
     "regions": _cmd_regions,
     "list": _cmd_list,
     "names": _cmd_names,
@@ -220,7 +217,7 @@ COMMANDS: Dict[str, Callable[..., Optional[int]]] = {
 }
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config_path = getattr(args, "config", None) or config.DEFAULT_PATH
     if args.channel is not None and not 1 <= args.channel <= 16:
@@ -238,7 +235,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not 0 <= device_id <= 15:
         raise SystemExit("error: --device-id is 0-15")
 
-    device: Optional[Device] = None
+    device: Device | None = None
     if args.command not in OFFLINE:
         if args.demo:
             from emorphed.demo import DemoDevice

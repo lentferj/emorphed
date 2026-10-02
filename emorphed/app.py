@@ -51,7 +51,8 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from collections.abc import Sequence
+from typing import Optional
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -66,8 +67,7 @@ from emu import messages as msg
 from emu.device import Device
 from emu.favorites import Favorite, Favorites
 
-
-__all__ = ["EmorphedApp", "main", "build_parser", "KEY_HINTS", "wrap_blocks"]
+__all__ = ["KEY_HINTS", "EmorphedApp", "build_parser", "main", "wrap_blocks"]
 
 _SEP = " · "
 
@@ -249,9 +249,9 @@ class EmorphedApp(App[None]):
         self,
         device: Device,
         *,
-        catalog: Optional[cat.Catalog] = None,
-        favorites: Optional[Favorites] = None,
-        config_path: Optional[str] = None,
+        catalog: cat.Catalog | None = None,
+        favorites: Favorites | None = None,
+        config_path: str | None = None,
     ) -> None:
         super().__init__()
         self.device = device
@@ -265,9 +265,9 @@ class EmorphedApp(App[None]):
         self._config_path = config_path
         self.view_mode = VIEW_ALL
         self._lock = threading.RLock()
-        self._bank_ids: List[str] = banks.region_ids()
+        self._bank_ids: list[str] = banks.region_ids()
         self._current_bank = self._bank_ids[0]
-        self._current: List[banks.Slot] = []
+        self._current: list[banks.Slot] = []
         self._busy = False
         self._filling = False
 
@@ -329,12 +329,12 @@ class EmorphedApp(App[None]):
 
     # --- filling ------------------------------------------------------------
 
-    def _favorite_keys(self, bank_id: str) -> Set[int]:
+    def _favorite_keys(self, bank_id: str) -> set[int]:
         if self.favorites is None:
             return set()
         return self.favorites.keys_for_bank(bank_id)
 
-    def _all_favourites(self) -> List[banks.Slot]:
+    def _all_favourites(self) -> list[banks.Slot]:
         """Every favourite in every bank, in bank order then number.
 
         Built from the slots rather than from the favourites rows, so a row
@@ -343,10 +343,10 @@ class EmorphedApp(App[None]):
         """
         if self.favorites is None:
             return []
-        wanted: Dict[str, Set[int]] = {}
+        wanted: dict[str, set[int]] = {}
         for favourite in self.favorites.all(order="bank"):
             wanted.setdefault(favourite.bank_id, set()).add(favourite.number)
-        out: List[banks.Slot] = []
+        out: list[banks.Slot] = []
         for bank_id in banks.region_ids():
             numbers = wanted.get(bank_id)
             if not numbers:
@@ -354,7 +354,7 @@ class EmorphedApp(App[None]):
             out.extend(e for e in banks.slots(bank_id) if e.number in numbers)
         return out
 
-    def _visible(self, bank_id: str) -> List[banks.Slot]:
+    def _visible(self, bank_id: str) -> list[banks.Slot]:
         if self.view_mode == VIEW_ALL_FAVOURITES:
             return self._all_favourites()
         entries = banks.slots(bank_id)
@@ -363,7 +363,7 @@ class EmorphedApp(App[None]):
             entries = [e for e in entries if e.number in marked]
         return entries
 
-    def _cursor_entry(self) -> Optional[banks.Slot]:
+    def _cursor_entry(self) -> banks.Slot | None:
         """The row under the cursor, or None."""
         table = self.query_one("#slot-table", DataTable)
         row = table.cursor_row
@@ -410,7 +410,7 @@ class EmorphedApp(App[None]):
         """Set the SysEx device ID. Not the MIDI channel: this instrument
         has both and they are set in different places on it."""
 
-        def done(text: Optional[str]) -> None:
+        def done(text: str | None) -> None:
             if not text:
                 return
             try:
@@ -444,7 +444,7 @@ class EmorphedApp(App[None]):
             pass
 
     def action_pick_channel(self) -> None:
-        def apply(text: Optional[str]) -> None:
+        def apply(text: str | None) -> None:
             if not text:
                 return
             try:
@@ -489,7 +489,7 @@ class EmorphedApp(App[None]):
 
     def _favourite_under_cursor(
         self,
-    ) -> Tuple[Optional[Tuple[str, int]], Optional[Favorite]]:
+    ) -> tuple[tuple[str, int] | None, Favorite | None]:
         """The favourite row for the slot under the cursor, if there is one.
 
         Tags and notes hang off a favourite, so there is nothing to attach
@@ -519,7 +519,7 @@ class EmorphedApp(App[None]):
             )
             return
 
-        def apply(value: Optional[str]) -> None:
+        def apply(value: str | None) -> None:
             if value is None:
                 return
             favorites.set_tags(where[0], where[1], value)
@@ -543,7 +543,7 @@ class EmorphedApp(App[None]):
             )
             return
 
-        def apply(value: Optional[str]) -> None:
+        def apply(value: str | None) -> None:
             if value is None:
                 return
             favorites.set_note(where[0], where[1], value)
@@ -759,7 +759,7 @@ class EmorphedApp(App[None]):
             self._busy = False
         self.call_from_thread(self._adopt_kind, kind, names)
 
-    def _adopt_kind(self, kind: str, names: List[str]) -> None:
+    def _adopt_kind(self, kind: str, names: list[str]) -> None:
         """File a flat list of names back into the regions it spans.
 
         The reply is "every preset, in the order they appear" -- one list
@@ -794,7 +794,7 @@ class EmorphedApp(App[None]):
         self.notify_status(f"read {adopted} {kind} name(s){short}")
 
     def action_search(self) -> None:
-        def done(text: Optional[str]) -> None:
+        def done(text: str | None) -> None:
             if not text:
                 return
             hits = self.catalog.search(text)
@@ -837,7 +837,7 @@ class EmorphedApp(App[None]):
         self.call_from_thread(self._show_info, version, configuration)
 
     def _show_info(
-        self, version: List[int], configuration: Optional[List[int]]
+        self, version: list[int], configuration: list[int] | None
     ) -> None:
         lines = [
             f"connection      {self.device.description}",
@@ -964,7 +964,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     from emu import config as cfg
 
@@ -974,7 +974,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.device_id is not None and not 0 <= args.device_id <= 15:
         sys.exit("error: --device-id is 0-15")
 
-    device: Optional[Device] = None
+    device: Device | None = None
     if args.demo:
         from emorphed.demo import DemoDevice
 

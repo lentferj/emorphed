@@ -37,18 +37,18 @@ from __future__ import annotations
 import os
 import sys
 import tomllib
-from typing import Any, Optional, Tuple
+from typing import Any
 
 __all__ = [
     "DEFAULT_PATH",
     "load_channel",
-    "save_channel",
-    "load_last_port",
-    "save_last_port",
-    "load_last_recv_port",
-    "save_last_recv_port",
     "load_device_id",
+    "load_last_port",
+    "load_last_recv_port",
+    "save_channel",
     "save_device_id",
+    "save_last_port",
+    "save_last_recv_port",
 ]
 
 DEFAULT_PATH = "config.toml"
@@ -56,7 +56,7 @@ DEFAULT_PATH = "config.toml"
 _warned = False
 
 
-def _read(path: str) -> Tuple[dict[str, Any], str]:
+def _read(path: str) -> tuple[dict[str, Any], str]:
     if not os.path.exists(path):
         return {}, "ok"
     try:
@@ -134,7 +134,7 @@ def _update(path: str, **changes: Any) -> None:
         pass
 
 
-def load_channel(path: str = DEFAULT_PATH) -> Optional[int]:
+def load_channel(path: str = DEFAULT_PATH) -> int | None:
     """The channel last sent on, zero-based, or None.
 
     The bool check is not decoration. `isinstance(True, int)` is True and
@@ -154,7 +154,7 @@ def save_channel(channel: int, path: str = DEFAULT_PATH) -> None:
     _update(path, channel=int(channel))
 
 
-def load_last_port(path: str = DEFAULT_PATH) -> Optional[str]:
+def load_last_port(path: str = DEFAULT_PATH) -> str | None:
     value = _read(path)[0].get("port")
     return value if isinstance(value, str) and value else None
 
@@ -163,7 +163,7 @@ def save_last_port(port: str, path: str = DEFAULT_PATH) -> None:
     _update(path, port=str(port))
 
 
-def load_last_recv_port(path: str = DEFAULT_PATH) -> Optional[str]:
+def load_last_recv_port(path: str = DEFAULT_PATH) -> str | None:
     """The input port last opened, when it differed from the output one."""
     value = _read(path)[0].get("recv_port")
     return value if isinstance(value, str) and value else None
@@ -173,7 +173,7 @@ def save_last_recv_port(port: str, path: str = DEFAULT_PATH) -> None:
     _update(path, recv_port=str(port))
 
 
-def load_device_id(path: str = DEFAULT_PATH) -> Optional[int]:
+def load_device_id(path: str = DEFAULT_PATH) -> int | None:
     value = _read(path)[0].get("device_id")
     # `isinstance(True, int)` is True, so a hand-edited `device_id = true`
     # would come back as device 1 -- a real device, and the wrong one. A

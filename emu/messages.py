@@ -51,41 +51,41 @@ arrives as a Proteus preset is silently a different preset.
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional, Sequence, Tuple
+from collections.abc import Iterable, Sequence
 
 __all__ = [
-    "SYSEX_START",
-    "SYSEX_END",
-    "EMU_ID",
-    "MORPHEUS_ID",
-    "PROTEUS_ID",
-    "Command",
-    "ProtocolError",
-    "Packet",
-    "frame",
-    "parse",
-    "to_words",
-    "from_words",
-    "checksum",
-    "signed",
-    "NAME_CHARS",
-    "decode_name",
-    "encode_name",
-    "preset_request",
-    "preset_bank_request",
-    "hyperpreset_request",
-    "midimap_request",
-    "preset_list_request",
-    "hyperpreset_list_request",
-    "midimap_list_request",
-    "version_request",
-    "configuration_request",
-    "master_data_request",
-    "parse_name_list",
     "BANK_REQUEST_BASE",
-    "PRESET_DATA_BYTES",
+    "EMU_ID",
     "HYPERPRESET_DATA_BYTES",
     "MIDIMAP_DATA_BYTES",
+    "MORPHEUS_ID",
+    "NAME_CHARS",
+    "PRESET_DATA_BYTES",
+    "PROTEUS_ID",
+    "SYSEX_END",
+    "SYSEX_START",
+    "Command",
+    "Packet",
+    "ProtocolError",
+    "checksum",
+    "configuration_request",
+    "decode_name",
+    "encode_name",
+    "frame",
+    "from_words",
+    "hyperpreset_list_request",
+    "hyperpreset_request",
+    "master_data_request",
+    "midimap_list_request",
+    "midimap_request",
+    "parse",
+    "parse_name_list",
+    "preset_bank_request",
+    "preset_list_request",
+    "preset_request",
+    "signed",
+    "to_words",
+    "version_request",
 ]
 
 SYSEX_START = 0xF0
@@ -220,14 +220,14 @@ class Command:
 class Packet:
     """One parsed E-mu message."""
 
-    __slots__ = ("device", "command", "version", "number", "body")
+    __slots__ = ("body", "command", "device", "number", "version")
 
     def __init__(
         self,
         device: int,
         command: int,
-        version: Optional[int],
-        number: Optional[int],
+        version: int | None,
+        number: int | None,
         body: bytes,
     ) -> None:
         #: Device ID, 0-15. Set in the unit's Master menu.
@@ -251,7 +251,7 @@ class Packet:
     def command_name(self) -> str:
         return Command.name(self.command)
 
-    def words(self) -> List[int]:
+    def words(self) -> list[int]:
         """The body as fourteen-bit words."""
         return from_words(self.body)
 
@@ -303,7 +303,7 @@ def to_words(values: Iterable[int]) -> bytes:
     return bytes(out)
 
 
-def from_words(data: Sequence[int]) -> List[int]:
+def from_words(data: Sequence[int]) -> list[int]:
     """MIDI byte pairs back to fourteen-bit words.
 
     A trailing odd byte is dropped: half a word is not a word.
@@ -354,7 +354,7 @@ def frame(
     )
 
 
-def parse(message: Sequence[int]) -> Optional[Packet]:
+def parse(message: Sequence[int]) -> Packet | None:
     """Parse one E-mu message, or ``None`` if it is not one.
 
     ``None`` rather than an exception for foreign traffic: a shared MIDI
@@ -394,7 +394,7 @@ def decode_name(words: Sequence[int]) -> str:
     return "".join(chars)
 
 
-def encode_name(name: str) -> List[int]:
+def encode_name(name: str) -> list[int]:
     """Twelve words holding a name, for building a fixture."""
     padded = f"{name:<{NAME_CHARS}}"[:NAME_CHARS]
     out = []
@@ -408,7 +408,7 @@ def encode_name(name: str) -> List[int]:
     return out
 
 
-def parse_name_list(packet: Packet) -> List[str]:
+def parse_name_list(packet: Packet) -> list[str]:
     """The names out of a Preset, Hyperpreset or Midimap List Data reply.
 
     The reply opens with a fourteen-bit count and then gives each name as
@@ -421,7 +421,7 @@ def parse_name_list(packet: Packet) -> List[str]:
     if len(body) < 2:
         return []
     count = body[0] | (body[1] << 7)
-    out: List[str] = []
+    out: list[str] = []
     cursor = 2
     while len(out) < count and cursor + NAME_CHARS <= len(body):
         chars = body[cursor : cursor + NAME_CHARS]

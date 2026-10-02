@@ -48,28 +48,27 @@ one of them.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 from emu import messages as m
 
 __all__ = [
+    "HYPERS_PER_BANK",
+    "MIDIMAPS_PER_BANK",
+    "PRESETS_PER_BANK",
+    "REGIONS",
+    "TOTAL_PRESETS",
     "Kind",
     "Region",
     "Slot",
-    "REGIONS",
-    "PRESETS_PER_BANK",
-    "HYPERS_PER_BANK",
-    "MIDIMAPS_PER_BANK",
-    "TOTAL_PRESETS",
-    "regions",
-    "region",
-    "region_ids",
-    "slots",
-    "slot",
-    "kinds_of",
     "bank_of",
     "bank_request",
+    "kinds_of",
+    "region",
+    "region_ids",
+    "regions",
     "select_messages",
+    "slot",
+    "slots",
 ]
 
 
@@ -131,7 +130,7 @@ class Region:
 
 
 #: Every region, in index order within each kind.
-REGIONS: Tuple[Region, ...] = (
+REGIONS: tuple[Region, ...] = (
     Region(
         "P-RAM",
         "Presets, RAM",
@@ -211,7 +210,7 @@ REGIONS: Tuple[Region, ...] = (
 
 TOTAL_PRESETS = sum(r.count for r in REGIONS if r.kind == Kind.PRESET)
 
-_BY_ID: Dict[str, Region] = {r.id: r for r in REGIONS}
+_BY_ID: dict[str, Region] = {r.id: r for r in REGIONS}
 
 
 @dataclass(frozen=True)
@@ -263,7 +262,7 @@ class Slot:
         return self.number
 
 
-def regions(kind: Optional[str] = None) -> List[Region]:
+def regions(kind: str | None = None) -> list[Region]:
     return [r for r in REGIONS if kind is None or r.kind == kind]
 
 
@@ -276,15 +275,15 @@ def region(region_id: str) -> Region:
         ) from None
 
 
-def region_ids(kind: Optional[str] = None) -> List[str]:
+def region_ids(kind: str | None = None) -> list[str]:
     return [r.id for r in regions(kind)]
 
 
-def kinds_of() -> Tuple[str, ...]:
+def kinds_of() -> tuple[str, ...]:
     return Kind.ALL
 
 
-def slots(region_id: str) -> List[Slot]:
+def slots(region_id: str) -> list[Slot]:
     entry = region(region_id)
     return [Slot(entry, entry.first + n) for n in range(entry.count)]
 
@@ -319,7 +318,7 @@ def bank_request(kind: str, bank: int, *, device: int = 0) -> bytes:
     )
 
 
-def select_messages(target: Slot, channel: int = 0) -> List[bytes]:
+def select_messages(target: Slot, channel: int = 0) -> list[bytes]:
     """Bank Select then Program Change, in the manual's own order.
 
     ``Bn 00 00 20 bb Cn pp``: Controller 0 set to zero, Controller 32 the

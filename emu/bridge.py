@@ -41,20 +41,21 @@ Two things from the manual that the code has to respect:
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from emu import banks
 from emu import messages as m
 
 __all__ = [
-    "MorpheusBridge",
-    "DeviceError",
-    "list_ports",
-    "likely_ports",
-    "DEFAULT_TIMEOUT",
-    "PROBE_TIMEOUT",
     "BANK_TIMEOUT",
+    "DEFAULT_TIMEOUT",
     "PRESET_GAP",
+    "PROBE_TIMEOUT",
+    "DeviceError",
+    "MorpheusBridge",
+    "likely_ports",
+    "list_ports",
 ]
 
 
@@ -87,7 +88,7 @@ def _rtmidi() -> Any:
     return rtmidi
 
 
-def list_ports() -> Tuple[List[str], List[str]]:
+def list_ports() -> tuple[list[str], list[str]]:
     rtmidi = _rtmidi()
     midi_in, midi_out = rtmidi.MidiIn(), rtmidi.MidiOut()
     try:
@@ -97,7 +98,7 @@ def list_ports() -> Tuple[List[str], List[str]]:
         midi_out.delete()
 
 
-def likely_ports() -> List[str]:
+def likely_ports() -> list[str]:
     """Ports whose name suggests the instrument. Only an ordering."""
     _, outs = list_ports()
     wanted = ("morpheus", "e-mu", "emu", "ultraproteus")
@@ -125,8 +126,8 @@ class MorpheusBridge:
         self.channel = channel
         self.description = description
         self.timeout = timeout
-        self.port: Optional[str] = None
-        self.recv_port: Optional[str] = None
+        self.port: str | None = None
+        self.recv_port: str | None = None
         try:
             self._in.ignore_types(sysex=False, timing=True, active_sense=True)
         except AttributeError:  # a test double
@@ -137,11 +138,11 @@ class MorpheusBridge:
         cls,
         port: str,
         *,
-        recv_port: Optional[str] = None,
+        recv_port: str | None = None,
         device_id: int = 0,
         channel: int = 0,
         timeout: float = DEFAULT_TIMEOUT,
-    ) -> "MorpheusBridge":
+    ) -> MorpheusBridge:
         rtmidi = _rtmidi()
         ins, outs = list_ports()
         listen = recv_port or port
@@ -181,7 +182,7 @@ class MorpheusBridge:
             except Exception:
                 pass
 
-    def __enter__(self) -> "MorpheusBridge":
+    def __enter__(self) -> MorpheusBridge:
         return self
 
     def __exit__(self, *_exc: Any) -> None:
@@ -194,7 +195,7 @@ class MorpheusBridge:
             pass
 
     def request(
-        self, outgoing: bytes, wanted: int, *, timeout: Optional[float] = None
+        self, outgoing: bytes, wanted: int, *, timeout: float | None = None
     ) -> m.Packet:
         """Send a request and wait for the reply that answers it.
 
@@ -233,7 +234,7 @@ class MorpheusBridge:
 
     # --- reading, all of it silent -----------------------------------------
 
-    def version(self, *, timeout: Optional[float] = None) -> List[int]:
+    def version(self, *, timeout: float | None = None) -> list[int]:
         """The unit's software version. Silent."""
         packet = self.request(
             m.version_request(device=self.device_id),
@@ -242,7 +243,7 @@ class MorpheusBridge:
         )
         return list(packet.body)
 
-    def configuration(self, *, timeout: Optional[float] = None) -> List[int]:
+    def configuration(self, *, timeout: float | None = None) -> list[int]:
         """What is fitted. Silent."""
         packet = self.request(
             m.configuration_request(device=self.device_id),
@@ -252,8 +253,8 @@ class MorpheusBridge:
         return list(packet.body)
 
     def names(
-        self, kind: str = banks.Kind.PRESET, *, timeout: Optional[float] = None
-    ) -> List[str]:
+        self, kind: str = banks.Kind.PRESET, *, timeout: float | None = None
+    ) -> list[str]:
         """Every name of one kind, in one exchange. Silent.
 
         The best thing in this protocol: one message out, every name
@@ -273,8 +274,8 @@ class MorpheusBridge:
         return m.parse_name_list(packet)
 
     def read_preset(
-        self, index: int, *, timeout: Optional[float] = None
-    ) -> List[int]:
+        self, index: int, *, timeout: float | None = None
+    ) -> list[int]:
         """One preset, as fourteen-bit words. Silent."""
         packet = self.request(
             m.preset_request(index, device=self.device_id),
@@ -308,8 +309,8 @@ class MorpheusBridge:
         cls,
         *,
         timeout: float = PROBE_TIMEOUT,
-        on_try: Optional[Callable[[str], None]] = None,
-    ) -> "MorpheusBridge":
+        on_try: Callable[[str], None] | None = None,
+    ) -> MorpheusBridge:
         """Find a Morpheus by asking each port, and each device ID, who it is.
 
         Sixteen device IDs times every port is a lot of probing, so the

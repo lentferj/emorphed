@@ -25,40 +25,39 @@ is the right length.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 from emu import banks
 from emu import messages as m
 
-__all__ = ["Library", "read_file", "read_bytes", "split_sysex"]
+__all__ = ["Library", "read_bytes", "read_file", "split_sysex"]
 
 
 @dataclass
 class Library:
     """Whatever a file turned out to hold, by kind and number."""
 
-    presets: Dict[int, List[int]] = field(default_factory=dict)
-    hyperpresets: Dict[int, List[int]] = field(default_factory=dict)
-    midimaps: Dict[int, List[int]] = field(default_factory=dict)
+    presets: dict[int, list[int]] = field(default_factory=dict)
+    hyperpresets: dict[int, list[int]] = field(default_factory=dict)
+    midimaps: dict[int, list[int]] = field(default_factory=dict)
     #: Dumps whose checksum did not match, by (kind, number). Kept rather
     #: than dropped: a caller may still want to look at one, and silence
     #: about a bad checksum would waste the only integrity check this
     #: format offers.
-    corrupt: List[str] = field(default_factory=list)
-    other: Dict[int, int] = field(default_factory=dict)
+    corrupt: list[str] = field(default_factory=list)
+    other: dict[int, int] = field(default_factory=dict)
     foreign: int = 0
-    device: Optional[int] = None
+    device: int | None = None
     #: True if any message arrived under the Proteus product ID.
     proteus_ids: int = 0
 
-    def of(self, kind: str) -> Dict[int, List[int]]:
+    def of(self, kind: str) -> dict[int, list[int]]:
         return {
             banks.Kind.PRESET: self.presets,
             banks.Kind.HYPERPRESET: self.hyperpresets,
             banks.Kind.MIDIMAP: self.midimaps,
         }[kind]
 
-    def names(self, kind: str = banks.Kind.PRESET) -> Dict[int, str]:
+    def names(self, kind: str = banks.Kind.PRESET) -> dict[int, str]:
         out = {}
         for number, words in sorted(self.of(kind).items()):
             try:
@@ -91,7 +90,7 @@ class Library:
         return ", ".join(parts) or "nothing this program recognises"
 
 
-def split_sysex(raw: bytes) -> List[bytes]:
+def split_sysex(raw: bytes) -> list[bytes]:
     """Every complete SysEx message in a blob.
 
     A trailing ``F0`` with no ``F7`` is dropped: that is what a transfer

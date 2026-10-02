@@ -24,7 +24,7 @@ bridge, so it is safe beside a session driving hardware.
 from __future__ import annotations
 
 import time
-from typing import Dict, Iterator, List, Optional, Tuple
+from collections.abc import Iterator
 
 from emu import banks
 from emu import messages as m
@@ -78,10 +78,10 @@ class DemoDevice:
         #: because a request for a card region is ignored outright when
         #: there is none and a demo that always had one would hide that.
         self.card = card
-        self.port: Optional[str] = None
-        self.recv_port: Optional[str] = None
-        self.selected: Optional[banks.Slot] = None
-        self.selected_log: List[Tuple[banks.Slot, int]] = []
+        self.port: str | None = None
+        self.recv_port: str | None = None
+        self.selected: banks.Slot | None = None
+        self.selected_log: list[tuple[banks.Slot, int]] = []
         self._closed = False
 
     def close(self) -> None:
@@ -98,11 +98,11 @@ class DemoDevice:
 
     # --- reading ------------------------------------------------------------
 
-    def version(self, *, timeout: Optional[float] = None) -> List[int]:
+    def version(self, *, timeout: float | None = None) -> list[int]:
         self._tick()
         return [1, 0, 0]
 
-    def configuration(self, *, timeout: Optional[float] = None) -> List[int]:
+    def configuration(self, *, timeout: float | None = None) -> list[int]:
         self._tick()
         return [1 if self.card else 0]
 
@@ -113,18 +113,18 @@ class DemoDevice:
             yield region
 
     def names(
-        self, kind: str = banks.Kind.PRESET, *, timeout: Optional[float] = None
-    ) -> List[str]:
+        self, kind: str = banks.Kind.PRESET, *, timeout: float | None = None
+    ) -> list[str]:
         self._tick()
-        out: List[str] = []
+        out: list[str] = []
         for region in self._regions(kind):
             for number in range(region.count):
                 out.append(demo_name(region.id, number))
         return out
 
     def read_preset(
-        self, index: int, *, timeout: Optional[float] = None
-    ) -> List[int]:
+        self, index: int, *, timeout: float | None = None
+    ) -> list[int]:
         self._tick()
         for region in self._regions(banks.Kind.PRESET):
             if region.first <= index <= region.last:

@@ -52,28 +52,20 @@ import sqlite3
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import (
     Any,
-    Callable,
-    Dict,
-    Iterable,
-    Iterator,
-    List,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
 )
 
 __all__ = [
-    "Favorite",
-    "Favorites",
-    "default_path",
-    "data_dir",
     "APP_NAME",
     "DB_NAME",
     "SCHEMA_VERSION",
+    "Favorite",
+    "Favorites",
+    "data_dir",
+    "default_path",
 ]
 
 #: Bumped whenever the schema changes; :meth:`Favorites._migrate` reads it.
@@ -163,16 +155,16 @@ class _Result:
     lock; what comes out is an ordinary list.
     """
 
-    __slots__ = ("rows", "rowcount")
+    __slots__ = ("rowcount", "rows")
 
-    def __init__(self, rows: List[Any], rowcount: int) -> None:
+    def __init__(self, rows: list[Any], rowcount: int) -> None:
         self.rows = rows
         self.rowcount = rowcount
 
-    def fetchone(self) -> Optional[Any]:
+    def fetchone(self) -> Any | None:
         return self.rows[0] if self.rows else None
 
-    def fetchall(self) -> List[Any]:
+    def fetchall(self) -> list[Any]:
         return self.rows
 
     def __iter__(self) -> Iterator[Any]:
@@ -241,7 +233,7 @@ class Favorite:
         return f"{self.bank_id}:{self.number:03d}"
 
     @property
-    def tag_list(self) -> List[str]:
+    def tag_list(self) -> list[str]:
         return [
             t for t in (part.strip() for part in self.tags.split(",")) if t
         ]
@@ -254,7 +246,7 @@ class Favorites:
     directory does not exist yet -- it is created.
     """
 
-    def __init__(self, path: Optional[str] = None) -> None:
+    def __init__(self, path: str | None = None) -> None:
         self.path = path or default_path()
         if self.path != ":memory:":
             os.makedirs(
@@ -334,7 +326,7 @@ class Favorites:
         finally:
             self._db.close()
 
-    def __enter__(self) -> "Favorites":
+    def __enter__(self) -> Favorites:
         return self
 
     def __exit__(self, *_exc: Any) -> None:
@@ -342,7 +334,7 @@ class Favorites:
 
     # --- reading ------------------------------------------------------------
 
-    def __contains__(self, key: str | Tuple[str, int]) -> bool:
+    def __contains__(self, key: str | tuple[str, int]) -> bool:
         bank_id, number = _split(key)
         row = self._db.execute(
             "SELECT 1 FROM favorites WHERE bank_id = ? AND number = ? "
@@ -357,7 +349,7 @@ class Favorites:
         ).fetchone()
         return int(row[0]) if row is not None else 0
 
-    def get(self, bank_id: str, number: int) -> Optional[Favorite]:
+    def get(self, bank_id: str, number: int) -> Favorite | None:
         row = self._db.execute(
             "SELECT * FROM favorites WHERE bank_id = ? AND number = ? "
             "AND active = 1",
@@ -365,7 +357,7 @@ class Favorites:
         ).fetchone()
         return _to_favorite(row) if row is not None else None
 
-    def _row(self, bank_id: str, number: int) -> Optional[Favorite]:
+    def _row(self, bank_id: str, number: int) -> Favorite | None:
         """Like :meth:`get`, but sees un-favourited rows too.
 
         Private because every caller outside this class means "is this a
@@ -377,7 +369,7 @@ class Favorites:
         ).fetchone()
         return _to_favorite(row) if row is not None else None
 
-    def keys(self) -> Set[str]:
+    def keys(self) -> set[str]:
         """Every favourited slot, as ``BANK:NNN`` strings.
 
         One query for the whole set rather than a ``__contains__`` per row:
@@ -391,7 +383,7 @@ class Favorites:
             )
         }
 
-    def keys_for_bank(self, bank_id: str) -> Set[int]:
+    def keys_for_bank(self, bank_id: str) -> set[int]:
         return {
             row["number"]
             for row in self._db.execute(
@@ -401,7 +393,7 @@ class Favorites:
             )
         }
 
-    def all(self, *, order: str = "added") -> List[Favorite]:
+    def all(self, *, order: str = "added") -> list[Favorite]:
         """Every favourite, newest first by default.
 
         ``order`` is validated against a fixed set rather than interpolated:
@@ -426,7 +418,7 @@ class Favorites:
             )
         ]
 
-    def search(self, needle: str) -> List[Favorite]:
+    def search(self, needle: str) -> list[Favorite]:
         """Favourites whose name, tags or note contain ``needle``."""
         # % and _ are LIKE wildcards. Without escaping them a search for
         # "%" matches every favourite and one for "_" matches every name of
@@ -447,7 +439,7 @@ class Favorites:
             )
         ]
 
-    def with_tag(self, tag: str) -> List[Favorite]:
+    def with_tag(self, tag: str) -> list[Favorite]:
         """Favourites carrying ``tag``.
 
         Matched against the parsed list rather than with a ``LIKE '%tag%'``,
@@ -462,9 +454,9 @@ class Favorites:
             if wanted in {t.lower() for t in fav.tag_list}
         ]
 
-    def tags(self) -> Dict[str, int]:
+    def tags(self) -> dict[str, int]:
         """Every tag in use, with how many favourites carry it."""
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
         for fav in self.all(order="bank") + self.dormant():
             for tag in fav.tag_list:
                 counts[tag] = counts.get(tag, 0) + 1
@@ -535,7 +527,7 @@ class Favorites:
         self._db.commit()
         return cursor.rowcount > 0
 
-    def dormant(self) -> List[Favorite]:
+    def dormant(self) -> list[Favorite]:
         """Slots un-favourited but still holding annotations."""
         return [
             _to_favorite(row)
@@ -589,9 +581,7 @@ class Favorites:
             bank_id, number, **_merge(self.get(bank_id, number), note=note)
         )
 
-    def refresh_names(
-        self, lookup: Callable[[str, int], Optional[str]]
-    ) -> int:
+    def refresh_names(self, lookup: Callable[[str, int], str | None]) -> int:
         """Re-label favourites from a name source. Returns how many changed.
 
         Used after a catalog is generated or a bank is read from the device,
@@ -616,7 +606,7 @@ class Favorites:
 # --- helpers ----------------------------------------------------------------
 
 
-def _split(key: str | Tuple[str, int]) -> Tuple[str, int]:
+def _split(key: str | tuple[str, int]) -> tuple[str, int]:
     """Accept either 'A' with a number, or ``"A:012"``."""
     if isinstance(key, tuple):
         return key[0], int(key[1])
@@ -636,7 +626,7 @@ def _to_favorite(row: sqlite3.Row) -> Favorite:
     )
 
 
-def _merge(existing: Optional[Favorite], **changes: Any) -> Dict[str, Any]:
+def _merge(existing: Favorite | None, **changes: Any) -> dict[str, Any]:
     """Fields for :meth:`Favorites.add` that change one thing and keep the rest.
 
     Without this, setting a rating on a favourite would blank its tags and
@@ -655,7 +645,7 @@ def _merge(existing: Optional[Favorite], **changes: Any) -> Dict[str, Any]:
 
 def _clean_tags(tags: str) -> str:
     """Normalise a comma-separated tag string: trimmed, de-duplicated."""
-    seen: List[str] = []
+    seen: list[str] = []
     for part in tags.split(","):
         tag = part.strip()
         if tag and tag.lower() not in {t.lower() for t in seen}:

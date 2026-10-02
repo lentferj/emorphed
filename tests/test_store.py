@@ -23,13 +23,12 @@ in the project had no test at all.
 """
 
 import sqlite3
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable, Iterator
 
 import pytest
 
-from emu import banks
 from emu import catalog as cat
 from emu import config
 from emu.favorites import Favorites
@@ -279,7 +278,6 @@ class TestABoolIsNotANumber:
     """
 
     def _loaders(self) -> Iterator[tuple[str, Callable[..., Any]]]:
-        import inspect
 
         import importlib
 

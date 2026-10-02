@@ -17,8 +17,7 @@
 
 import pytest
 
-from emu import banks
-from emu import dumps
+from emu import banks, dumps
 from emu import messages as m
 
 
