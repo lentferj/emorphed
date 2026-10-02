@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+.coverage
+*.egg-info/
 
 # The generated name catalog. E-mu's preset names are not ours to
 # redistribute: regenerate it locally with tools/extract_catalog.py.

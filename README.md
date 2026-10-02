@@ -58,6 +58,35 @@ python -m emorphed.cli status           # ask the unit who it is
 `read` checks every dump's checksum, so it can tell you a file is
 *damaged* rather than only that it is the wrong length.
 
+## Development checks
+
+A no-AI quality gate. Install the dev tools, then run everything:
+
+```
+uv sync
+make check          # or: uv run make check
+```
+
+`make check` runs each stage in sequence and stops at the first failure:
+
+| target | what it does |
+|---|---|
+| `make lint` | `ruff check` + `ruff format --check` — lint (E, F, I, B, S, SIM, UP, C4, PL, RUF, C901) and formatting |
+| `make format` | `ruff format` — apply formatting manually |
+| `make typecheck` | `mypy --strict emorphed emu tests` |
+| `make test` | `pytest` with coverage (`--cov-report=term-missing`, no threshold) |
+| `make audit` | `pip-audit`, `vulture`, `deptry`, `detect-secrets audit` |
+
+`pre-commit install` (once) runs ruff (lint + format), mypy and detect-secrets
+on every commit. shellcheck/shfmt are omitted — this repo has no shell
+scripts.
+
+The code is clean under every gate: ruff (lint + format), mypy strict, and the
+audit tools all pass without suppressions. `rtmidi` and `nano` ship no type
+stubs, so mypy is told to ignore those two imports. `setuptools>=83` is pinned
+as a dev dependency to keep `pip-audit` clear of the build tool's known
+vulnerabilities.
+
 ## Licence
 
 GPL-2.0-or-later. AI assistance was used; see `DISCLAIMER.md`.
