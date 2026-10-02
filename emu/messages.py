@@ -54,15 +54,38 @@ from __future__ import annotations
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 __all__ = [
-    "SYSEX_START", "SYSEX_END", "EMU_ID", "MORPHEUS_ID", "PROTEUS_ID",
-    "Command", "ProtocolError", "Packet",
-    "frame", "parse", "to_words", "from_words", "checksum", "signed",
-    "NAME_CHARS", "decode_name", "encode_name",
-    "preset_request", "preset_bank_request", "hyperpreset_request",
-    "midimap_request", "preset_list_request", "hyperpreset_list_request",
-    "midimap_list_request", "version_request", "configuration_request",
-    "master_data_request", "parse_name_list", "BANK_REQUEST_BASE",
-    "PRESET_DATA_BYTES", "HYPERPRESET_DATA_BYTES", "MIDIMAP_DATA_BYTES",
+    "SYSEX_START",
+    "SYSEX_END",
+    "EMU_ID",
+    "MORPHEUS_ID",
+    "PROTEUS_ID",
+    "Command",
+    "ProtocolError",
+    "Packet",
+    "frame",
+    "parse",
+    "to_words",
+    "from_words",
+    "checksum",
+    "signed",
+    "NAME_CHARS",
+    "decode_name",
+    "encode_name",
+    "preset_request",
+    "preset_bank_request",
+    "hyperpreset_request",
+    "midimap_request",
+    "preset_list_request",
+    "hyperpreset_list_request",
+    "midimap_list_request",
+    "version_request",
+    "configuration_request",
+    "master_data_request",
+    "parse_name_list",
+    "BANK_REQUEST_BASE",
+    "PRESET_DATA_BYTES",
+    "HYPERPRESET_DATA_BYTES",
+    "MIDIMAP_DATA_BYTES",
 ]
 
 SYSEX_START = 0xF0
@@ -133,21 +156,35 @@ class Command:
     FILTER_LIST_DATA = 0x57
 
     NAMES = {
-        0x00: "Preset Request", 0x01: "Preset Data",
-        0x02: "Parameter Request", 0x03: "Parameter Data",
-        0x04: "Tune Table Request", 0x05: "Tune Table Data",
-        0x06: "Prog Map Request", 0x07: "Prog Map Data",
+        0x00: "Preset Request",
+        0x01: "Preset Data",
+        0x02: "Parameter Request",
+        0x03: "Parameter Data",
+        0x04: "Tune Table Request",
+        0x05: "Tune Table Data",
+        0x06: "Prog Map Request",
+        0x07: "Prog Map Data",
         0x08: "Master Data Request",
-        0x0A: "Version Request", 0x0B: "Version Data",
-        0x0C: "Configuration Request", 0x0D: "Configuration Data",
-        0x0E: "Instrument List Request", 0x0F: "Instrument List Data",
-        0x12: "Preset List Request", 0x13: "Preset List Data",
-        0x44: "Hyperpreset Request", 0x45: "Hyperpreset Data",
-        0x46: "Midimap Request", 0x47: "Midimap Data",
-        0x50: "Hyperpreset List Request", 0x51: "Hyperpreset List Data",
-        0x52: "Midimap List Request", 0x53: "Midimap List Data",
-        0x54: "Effect List Request", 0x55: "Effect List Data",
-        0x56: "Filter List Request", 0x57: "Filter List Data",
+        0x0A: "Version Request",
+        0x0B: "Version Data",
+        0x0C: "Configuration Request",
+        0x0D: "Configuration Data",
+        0x0E: "Instrument List Request",
+        0x0F: "Instrument List Data",
+        0x12: "Preset List Request",
+        0x13: "Preset List Data",
+        0x44: "Hyperpreset Request",
+        0x45: "Hyperpreset Data",
+        0x46: "Midimap Request",
+        0x47: "Midimap Data",
+        0x50: "Hyperpreset List Request",
+        0x51: "Hyperpreset List Data",
+        0x52: "Midimap List Request",
+        0x53: "Midimap List Data",
+        0x54: "Effect List Request",
+        0x55: "Effect List Data",
+        0x56: "Filter List Request",
+        0x57: "Filter List Data",
     }
 
     #: Which data message answers which request.
@@ -185,8 +222,14 @@ class Packet:
 
     __slots__ = ("device", "command", "version", "number", "body")
 
-    def __init__(self, device: int, command: int, version: Optional[int],
-                 number: Optional[int], body: bytes) -> None:
+    def __init__(
+        self,
+        device: int,
+        command: int,
+        version: Optional[int],
+        number: Optional[int],
+        body: bytes,
+    ) -> None:
         #: Device ID, 0-15. Set in the unit's Master menu.
         self.device = device
         self.command = command
@@ -213,15 +256,21 @@ class Packet:
         return from_words(self.body)
 
     def __repr__(self) -> str:
-        return (f"Packet(device={self.device}, {self.command_name!r}, "
-                f"number={self.number}, {len(self.body)} bytes)")
+        return (
+            f"Packet(device={self.device}, {self.command_name!r}, "
+            f"number={self.number}, {len(self.body)} bytes)"
+        )
 
 
 #: Data messages that carry a version byte and a two-byte object number
 #: between the command and the data.
-_NUMBERED = frozenset({
-    Command.PRESET_DATA, Command.HYPERPRESET_DATA, Command.MIDIMAP_DATA,
-})
+_NUMBERED = frozenset(
+    {
+        Command.PRESET_DATA,
+        Command.HYPERPRESET_DATA,
+        Command.MIDIMAP_DATA,
+    }
+)
 
 
 def checksum(body: Sequence[int]) -> int:
@@ -246,7 +295,8 @@ def to_words(values: Iterable[int]) -> bytes:
         if not -0x2000 <= value <= 0x3FFF:
             raise ProtocolError(
                 f"{value} does not fit in a fourteen-bit word; the range "
-                f"is -8192 to 16383")
+                f"is -8192 to 16383"
+            )
         word = value & 0x3FFF
         out.append(word & 0x7F)
         out.append((word >> 7) & 0x7F)
@@ -264,7 +314,8 @@ def from_words(data: Sequence[int]) -> List[int]:
         for part in (low, high):
             if not 0 <= part <= 0x7F:
                 raise ProtocolError(
-                    f"{part:#04x} has bit 7 set; SysEx data must not")
+                    f"{part:#04x} has bit 7 set; SysEx data must not"
+                )
         out.append(low | (high << 7))
     return out
 
@@ -281,8 +332,13 @@ def signed(word: int) -> int:
     return word - 0x4000 if word & 0x2000 else word
 
 
-def frame(command: int, body: Sequence[int] = (), *, device: int = 0,
-          product: int = MORPHEUS_ID) -> bytes:
+def frame(
+    command: int,
+    body: Sequence[int] = (),
+    *,
+    device: int = 0,
+    product: int = MORPHEUS_ID,
+) -> bytes:
     """One E-mu message, ready to send. No checksum is added.
 
     Requests carry no checksum; only data messages do, and this program
@@ -292,10 +348,10 @@ def frame(command: int, body: Sequence[int] = (), *, device: int = 0,
         raise ProtocolError(f"device ID {device} is outside 0-15")
     for byte in body:
         if not 0 <= byte <= 0x7F:
-            raise ProtocolError(
-                f"{byte:#04x} is not a 7-bit data byte")
-    return bytes([SYSEX_START, EMU_ID, product, device, command, *body,
-                  SYSEX_END])
+            raise ProtocolError(f"{byte:#04x} is not a 7-bit data byte")
+    return bytes(
+        [SYSEX_START, EMU_ID, product, device, command, *body, SYSEX_END]
+    )
 
 
 def parse(message: Sequence[int]) -> Optional[Packet]:
@@ -329,7 +385,8 @@ def decode_name(words: Sequence[int]) -> str:
     """Twelve characters from the first twelve words of a record."""
     if len(words) < NAME_CHARS:
         raise ProtocolError(
-            f"a name is {NAME_CHARS} words; this record has {len(words)}")
+            f"a name is {NAME_CHARS} words; this record has {len(words)}"
+        )
     chars = []
     for word in words[:NAME_CHARS]:
         value = word & 0x7F
@@ -345,7 +402,8 @@ def encode_name(name: str) -> List[int]:
         value = ord(char)
         if not 32 <= value < 127:
             raise ProtocolError(
-                f"{char!r} is outside this instrument's ASCII 32-127")
+                f"{char!r} is outside this instrument's ASCII 32-127"
+            )
         out.append(value)
     return out
 
@@ -366,7 +424,7 @@ def parse_name_list(packet: Packet) -> List[str]:
     out: List[str] = []
     cursor = 2
     while len(out) < count and cursor + NAME_CHARS <= len(body):
-        chars = body[cursor:cursor + NAME_CHARS]
+        chars = body[cursor : cursor + NAME_CHARS]
         out.append("".join(chr(c) if 32 <= c < 127 else "?" for c in chars))
         cursor += NAME_CHARS
         # the null terminator, when it is there
@@ -377,11 +435,11 @@ def parse_name_list(packet: Packet) -> List[str]:
 
 # --- requests ---------------------------------------------------------------
 
+
 def _numbered_request(command: int, number: int, device: int) -> bytes:
     if not 0 <= number <= 0x3FFF:
         raise ProtocolError(f"{number} does not fit in fourteen bits")
-    return frame(command, [number & 0x7F, (number >> 7) & 0x7F],
-                 device=device)
+    return frame(command, [number & 0x7F, (number >> 7) & 0x7F], device=device)
 
 
 def preset_request(number: int, *, device: int = 0) -> bytes:
@@ -391,8 +449,9 @@ def preset_request(number: int, *, device: int = 0) -> bytes:
 
 def preset_bank_request(bank: int, *, device: int = 0) -> bytes:
     """Ask for a whole bank of 128 presets."""
-    return _numbered_request(Command.PRESET_REQUEST,
-                             BANK_REQUEST_BASE + bank, device)
+    return _numbered_request(
+        Command.PRESET_REQUEST, BANK_REQUEST_BASE + bank, device
+    )
 
 
 def hyperpreset_request(number: int, *, device: int = 0) -> bytes:

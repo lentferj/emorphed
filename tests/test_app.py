@@ -150,10 +150,11 @@ class TestFavouritesActOnTheRowNotThePane:
         async with app.run_test() as pilot:
             await pilot.pause()
             app.view_mode = VIEW_ALL_FAVOURITES
-            app._fill("P-RAM")              # pane elsewhere; row is P-ROM 5
+            app._fill("P-RAM")  # pane elsewhere; row is P-ROM 5
             await pilot.pause()
             assert [(e.bank_id, e.number) for e in app._current] == [
-                ("P-ROM", 5)]
+                ("P-ROM", 5)
+            ]
             app.query_one("#slot-table").focus()
             await pilot.press("f")
             for _ in range(4):
@@ -180,17 +181,24 @@ class TestTheDeviceIdIsNotTheChannel:
 
 class TestStructuralRules:
     def _workers(self):
-        path = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), "emorphed", "app.py")
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "emorphed",
+            "app.py",
+        )
         with open(path, encoding="utf-8") as handle:
             tree = ast.parse(handle.read())
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef):
                 continue
-            if any((isinstance(d, ast.Call)
-                    and getattr(d.func, "id", "") == "work")
-                   or getattr(d, "id", "") == "work"
-                   for d in node.decorator_list):
+            if any(
+                (
+                    isinstance(d, ast.Call)
+                    and getattr(d.func, "id", "") == "work"
+                )
+                or getattr(d, "id", "") == "work"
+                for d in node.decorator_list
+            ):
                 yield node
 
     def test_there_are_workers_to_check(self):
@@ -202,22 +210,29 @@ class TestStructuralRules:
         offenders = []
         for node in self._workers():
             for inner in ast.walk(node):
-                if (isinstance(inner, ast.Attribute)
-                        and inner.attr in ("favorites", "catalog")
-                        and isinstance(inner.value, ast.Name)
-                        and inner.value.id == "self"):
+                if (
+                    isinstance(inner, ast.Attribute)
+                    and inner.attr in ("favorites", "catalog")
+                    and isinstance(inner.value, ast.Name)
+                    and inner.value.id == "self"
+                ):
                     offenders.append(node.name)
         assert not offenders, (
             f"worker(s) {sorted(set(offenders))} reach self.favorites or "
-            f"self.catalog; workers do MIDI and hand off")
+            f"self.catalog; workers do MIDI and hand off"
+        )
 
     def test_no_worker_sets_the_busy_flag_itself(self):
         offenders = []
         for node in self._workers():
             for inner in ast.walk(node):
-                if (isinstance(inner, ast.Assign)
-                        and any(isinstance(t, ast.Attribute)
-                                and t.attr == "_busy" for t in inner.targets)
-                        and getattr(inner.value, "value", None) is True):
+                if (
+                    isinstance(inner, ast.Assign)
+                    and any(
+                        isinstance(t, ast.Attribute) and t.attr == "_busy"
+                        for t in inner.targets
+                    )
+                    and getattr(inner.value, "value", None) is True
+                ):
                     offenders.append(node.name)
         assert not offenders, f"worker(s) {offenders} set _busy themselves"

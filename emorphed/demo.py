@@ -35,8 +35,18 @@ __all__ = ["DemoDevice", "demo_name"]
 #: mimics the *shape* of this instrument's naming, which is a category
 #: abbreviation and a colon, without borrowing any of its words.
 _TAGS = ("Zzz", "Qrk", "Vlt", "Nmb", "Wob", "Pfft")
-_HEADS = ("Tin", "Glass", "Chalk", "Copper", "Velvet", "Cork", "Willow",
-          "Pewter", "Basalt", "Linen")
+_HEADS = (
+    "Tin",
+    "Glass",
+    "Chalk",
+    "Copper",
+    "Velvet",
+    "Cork",
+    "Willow",
+    "Pewter",
+    "Basalt",
+    "Linen",
+)
 _TAILS = ("Bell", "Drone", "Wash", "Sweep", "Hum", "Comb", "Gust", "Loom")
 
 
@@ -45,14 +55,20 @@ def demo_name(region_id: str, number: int) -> str:
     tag = _TAGS[seed % len(_TAGS)]
     head = _HEADS[(seed // len(_TAGS)) % len(_HEADS)]
     tail = _TAILS[(seed // 31) % len(_TAILS)]
-    return f"{tag}:{head}{tail}"[:m.NAME_CHARS].ljust(m.NAME_CHARS)
+    return f"{tag}:{head}{tail}"[: m.NAME_CHARS].ljust(m.NAME_CHARS)
 
 
 class DemoDevice:
     """Answers the subset of the protocol emorphed speaks."""
 
-    def __init__(self, *, latency: float = 0.0, device_id: int = 0,
-                 channel: int = 0, card: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        latency: float = 0.0,
+        device_id: int = 0,
+        channel: int = 0,
+        card: bool = False,
+    ) -> None:
         self.description = "demo (no MIDI ports opened)"
         self.device_id = device_id
         self.channel = channel
@@ -75,7 +91,8 @@ class DemoDevice:
         if self._closed:
             raise RuntimeError(
                 "this demo device is closed; a real bridge would be a "
-                "closed port and would fail less clearly")
+                "closed port and would fail less clearly"
+            )
         if self.latency:
             time.sleep(self.latency)
 
@@ -95,8 +112,9 @@ class DemoDevice:
                 continue
             yield region
 
-    def names(self, kind: str = banks.Kind.PRESET, *,
-              timeout: Optional[float] = None) -> List[str]:
+    def names(
+        self, kind: str = banks.Kind.PRESET, *, timeout: Optional[float] = None
+    ) -> List[str]:
         self._tick()
         out: List[str] = []
         for region in self._regions(kind):
@@ -104,8 +122,9 @@ class DemoDevice:
                 out.append(demo_name(region.id, number))
         return out
 
-    def read_preset(self, index: int, *,
-                    timeout: Optional[float] = None) -> List[int]:
+    def read_preset(
+        self, index: int, *, timeout: Optional[float] = None
+    ) -> List[int]:
         self._tick()
         for region in self._regions(banks.Kind.PRESET):
             if region.first <= index <= region.last:
@@ -116,13 +135,14 @@ class DemoDevice:
                 return words
         raise TimeoutError(
             f"no preset {index}: a request for a card region is ignored "
-            f"outright when no card is fitted")
+            f"outright when no card is fitted"
+        )
 
     # --- the one thing that makes a sound ----------------------------------
 
     def select(self, target: banks.Slot) -> None:
         """Select a preset. **This changes what the unit is playing.**"""
         self._tick()
-        banks.select_messages(target, self.channel)   # same refusals
+        banks.select_messages(target, self.channel)  # same refusals
         self.selected = target
         self.selected_log.append((target, self.channel))

@@ -57,8 +57,10 @@ class TestNames:
         assert m.decode_name(words) == "Invented    "
 
     def test_it_is_truncated_not_wrapped(self):
-        assert m.decode_name(m.encode_name("A very long name indeed")) \
+        assert (
+            m.decode_name(m.encode_name("A very long name indeed"))
             == "A very long "
+        )
 
     def test_the_character_set_has_an_edge(self):
         with pytest.raises(m.ProtocolError, match="ASCII 32-127"):
@@ -72,8 +74,14 @@ class TestNames:
 class TestFraming:
     def test_a_message_carries_the_emu_header(self):
         framed = m.frame(m.Command.VERSION_REQUEST, device=3)
-        assert list(framed) == [0xF0, m.EMU_ID, m.MORPHEUS_ID, 3,
-                                m.Command.VERSION_REQUEST, 0xF7]
+        assert list(framed) == [
+            0xF0,
+            m.EMU_ID,
+            m.MORPHEUS_ID,
+            3,
+            m.Command.VERSION_REQUEST,
+            0xF7,
+        ]
 
     def test_the_device_id_is_four_bits(self):
         with pytest.raises(m.ProtocolError, match="0-15"):
@@ -106,9 +114,19 @@ def _preset_dump(number, name, device=0):
     words = m.encode_name(name) + [0] * (278 - m.NAME_CHARS)
     body = m.to_words(words)
     head = [1, number & 0x7F, (number >> 7) & 0x7F]
-    return bytes([0xF0, m.EMU_ID, m.MORPHEUS_ID, device,
-                  m.Command.PRESET_DATA, *head, *body,
-                  m.checksum(body), 0xF7])
+    return bytes(
+        [
+            0xF0,
+            m.EMU_ID,
+            m.MORPHEUS_ID,
+            device,
+            m.Command.PRESET_DATA,
+            *head,
+            *body,
+            m.checksum(body),
+            0xF7,
+        ]
+    )
 
 
 class TestChecksum:
@@ -148,10 +166,13 @@ class TestTheMemoryMap:
         assert item.index == 133
 
     def test_a_bank_is_worked_out_from_the_index(self):
-        assert banks.bank_of(banks.Kind.PRESET,
-                             banks.slot("P-ROM", 0).index) == 1
-        assert banks.bank_of(banks.Kind.PRESET,
-                             banks.slot("P-CARD", 0).index) == 2
+        assert (
+            banks.bank_of(banks.Kind.PRESET, banks.slot("P-ROM", 0).index) == 1
+        )
+        assert (
+            banks.bank_of(banks.Kind.PRESET, banks.slot("P-CARD", 0).index)
+            == 2
+        )
 
     def test_card_regions_are_marked(self):
         assert banks.region("P-CARD").needs_card
@@ -166,9 +187,11 @@ class TestSelecting:
     def test_controller_32_carries_the_bank(self):
         """The manual's own sequence: Bn 00 00 20 bb Cn pp."""
         out = banks.select_messages(banks.slot("P-ROM", 5), channel=2)
-        assert [list(x) for x in out] == [[0xB2, 0x00, 0x00],
-                                          [0xB2, 0x20, 1],
-                                          [0xC2, 5]]
+        assert [list(x) for x in out] == [
+            [0xB2, 0x00, 0x00],
+            [0xB2, 0x20, 1],
+            [0xC2, 5],
+        ]
 
     def test_controller_zero_is_sent_and_is_zero(self):
         out = banks.select_messages(banks.slot("P-CARD", 0))
@@ -190,13 +213,15 @@ class TestNameLists:
         for name in names:
             body += bytes(ord(c) for c in name)
             body.append(0)
-        packet = m.Packet(0, m.Command.PRESET_LIST_DATA, None, None,
-                          bytes(body))
+        packet = m.Packet(
+            0, m.Command.PRESET_LIST_DATA, None, None, bytes(body)
+        )
         assert m.parse_name_list(packet) == names
 
     def test_a_short_reply_gives_what_arrived(self):
         """A list cut off partway is still worth showing."""
         body = bytearray([10, 0]) + bytes(ord(c) for c in "Invented One")
-        packet = m.Packet(0, m.Command.PRESET_LIST_DATA, None, None,
-                          bytes(body))
+        packet = m.Packet(
+            0, m.Command.PRESET_LIST_DATA, None, None, bytes(body)
+        )
         assert m.parse_name_list(packet) == ["Invented One"]

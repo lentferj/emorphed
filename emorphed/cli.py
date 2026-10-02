@@ -33,29 +33,46 @@ __all__ = ["main", "build_parser"]
 def _table(rows: Sequence[Sequence[str]], headers: Sequence[str]) -> str:
     if not rows:
         return "(nothing)"
-    widths = [max(len(str(r[i])) for r in (*rows, headers))
-              for i in range(len(headers))]
-    out = ["  ".join(str(h).ljust(w) for h, w in zip(headers, widths)).rstrip(),
-           "  ".join("-" * w for w in widths)]
+    widths = [
+        max(len(str(r[i])) for r in (*rows, headers))
+        for i in range(len(headers))
+    ]
+    out = [
+        "  ".join(str(h).ljust(w) for h, w in zip(headers, widths)).rstrip(),
+        "  ".join("-" * w for w in widths),
+    ]
     for row in rows:
-        out.append("  ".join(str(c).ljust(w)
-                             for c, w in zip(row, widths)).rstrip())
+        out.append(
+            "  ".join(str(c).ljust(w) for c, w in zip(row, widths)).rstrip()
+        )
     return "\n".join(out)
 
 
 def _cmd_regions(_device, _args) -> None:
     rows = []
     for entry in banks.regions():
-        rows.append([entry.id, entry.label, entry.kind,
-                     f"{entry.first}-{entry.last}", str(entry.count),
-                     "yes" if entry.writable else "no",
-                     "card" if entry.needs_card else ""])
-    print(_table(rows, ["id", "name", "kind", "indices", "n", "writable",
-                        "needs"]))
-    print(f"\n{banks.TOTAL_PRESETS} presets, plus hyperpresets and "
-          f"midimaps.\nA preset *index* is what SysEx addresses; it is not "
-          f"a program number.\nBank Select is Controller 32, with "
-          f"Controller 0 held at zero.")
+        rows.append(
+            [
+                entry.id,
+                entry.label,
+                entry.kind,
+                f"{entry.first}-{entry.last}",
+                str(entry.count),
+                "yes" if entry.writable else "no",
+                "card" if entry.needs_card else "",
+            ]
+        )
+    print(
+        _table(
+            rows, ["id", "name", "kind", "indices", "n", "writable", "needs"]
+        )
+    )
+    print(
+        f"\n{banks.TOTAL_PRESETS} presets, plus hyperpresets and "
+        f"midimaps.\nA preset *index* is what SysEx addresses; it is not "
+        f"a program number.\nBank Select is Controller 32, with "
+        f"Controller 0 held at zero."
+    )
 
 
 def _cmd_list(_device, args) -> None:
@@ -63,8 +80,13 @@ def _cmd_list(_device, args) -> None:
     catalog = cat.load(getattr(args, "catalog", None))
     rows = []
     for item in banks.slots(entry.id):
-        rows.append([f"{item.number:03d}", str(item.index),
-                     catalog.display_name(item.bank_id, item.number)])
+        rows.append(
+            [
+                f"{item.number:03d}",
+                str(item.index),
+                catalog.display_name(item.bank_id, item.number),
+            ]
+        )
     print(f"{entry.label} — {entry.count}\n")
     print(_table(rows, ["#", "index", "name"]))
     if entry.note:
@@ -99,18 +121,24 @@ def _cmd_select(device, args) -> int:
     except LookupError as exc:
         raise SystemExit(f"error: {exc}")
     if not args.yes:
-        print(f"about to select {target.display} on MIDI channel "
-              f"{device.channel + 1}.")
+        print(
+            f"about to select {target.display} on MIDI channel "
+            f"{device.channel + 1}."
+        )
         print("This changes what the instrument is playing.")
         if input("proceed? [y/N] ").strip().lower() not in ("y", "yes"):
             print("nothing sent")
             return 1
     device.select(target)
-    print(f"selected {target.display} — Bank Select 32 = "
-          f"{banks.bank_of(target.kind, target.index)}, Program Change "
-          f"{target.program_change}")
-    print("(that program number reaches this preset only while the "
-          "default Program Map is in force)")
+    print(
+        f"selected {target.display} — Bank Select 32 = "
+        f"{banks.bank_of(target.kind, target.index)}, Program Change "
+        f"{target.program_change}"
+    )
+    print(
+        "(that program number reaches this preset only while the "
+        "default Program Map is in force)"
+    )
     return 0
 
 
@@ -126,8 +154,9 @@ def _cmd_read(_device, args) -> None:
         print(f"  !! ...and {len(library.corrupt) - 10} more")
     names = library.names(args.kind)
     if names:
-        rows = [[f"{n:03d}", text.rstrip()] for n, text in
-                sorted(names.items())]
+        rows = [
+            [f"{n:03d}", text.rstrip()] for n, text in sorted(names.items())
+        ]
         print()
         print(_table(rows, ["#", "name"]))
 
@@ -138,11 +167,16 @@ OFFLINE = {"regions", "list", "read"}
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="morphcli",
-        description="Browse an E-mu Morpheus. Read-only except `select`.")
+        description="Browse an E-mu Morpheus. Read-only except `select`.",
+    )
     parser.add_argument("--port")
     parser.add_argument("--recv-port")
-    parser.add_argument("--device-id", type=int, default=None,
-                        help="SysEx device ID 0-15 (not the MIDI channel)")
+    parser.add_argument(
+        "--device-id",
+        type=int,
+        default=None,
+        help="SysEx device ID 0-15 (not the MIDI channel)",
+    )
     parser.add_argument("--channel", type=int)
     parser.add_argument("--catalog")
     parser.add_argument("--config")
@@ -154,21 +188,35 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("list", help="every slot in a region")
     sp.add_argument("region", choices=banks.region_ids())
     sp = sub.add_parser("names", help="read every name (silent)")
-    sp.add_argument("kind", nargs="?", default=banks.Kind.PRESET,
-                    choices=list(banks.Kind.ALL))
+    sp.add_argument(
+        "kind",
+        nargs="?",
+        default=banks.Kind.PRESET,
+        choices=list(banks.Kind.ALL),
+    )
     sub.add_parser("status", help="ask the unit who it is (silent)")
     sp = sub.add_parser("select", help="select a preset ON THE UNIT")
     sp.add_argument("region", choices=banks.region_ids(banks.Kind.PRESET))
     sp.add_argument("number", type=int)
     sp = sub.add_parser("read", help="read a .syx dump (no hardware)")
     sp.add_argument("file")
-    sp.add_argument("kind", nargs="?", default=banks.Kind.PRESET,
-                    choices=list(banks.Kind.ALL))
+    sp.add_argument(
+        "kind",
+        nargs="?",
+        default=banks.Kind.PRESET,
+        choices=list(banks.Kind.ALL),
+    )
     return parser
 
 
-COMMANDS = {"regions": _cmd_regions, "list": _cmd_list, "names": _cmd_names,
-            "status": _cmd_status, "select": _cmd_select, "read": _cmd_read}
+COMMANDS = {
+    "regions": _cmd_regions,
+    "list": _cmd_list,
+    "names": _cmd_names,
+    "status": _cmd_status,
+    "select": _cmd_select,
+    "read": _cmd_read,
+}
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -176,10 +224,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     config_path = getattr(args, "config", None) or config.DEFAULT_PATH
     if args.channel is not None and not 1 <= args.channel <= 16:
         raise SystemExit("error: --channel is 1-16")
-    channel = ((args.channel - 1) if args.channel is not None
-               else (config.load_channel(config_path) or 0))
-    device_id = (args.device_id if args.device_id is not None
-                 else (config.load_device_id(config_path) or 0))
+    channel = (
+        (args.channel - 1)
+        if args.channel is not None
+        else (config.load_channel(config_path) or 0)
+    )
+    device_id = (
+        args.device_id
+        if args.device_id is not None
+        else (config.load_device_id(config_path) or 0)
+    )
     if not 0 <= device_id <= 15:
         raise SystemExit("error: --device-id is 0-15")
 
@@ -196,14 +250,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if args.port:
                     device = b.MorpheusBridge.open(
                         args.port,
-                        recv_port=(args.recv_port
-                                   or config.load_last_recv_port(
-                                       config_path)),
-                        device_id=device_id, channel=channel)
+                        recv_port=(
+                            args.recv_port
+                            or config.load_last_recv_port(config_path)
+                        ),
+                        device_id=device_id,
+                        channel=channel,
+                    )
                 else:
                     device = b.MorpheusBridge.autodetect(
-                        on_try=lambda n: print(f"  probing {n}...",
-                                               file=sys.stderr))
+                        on_try=lambda n: print(
+                            f"  probing {n}...", file=sys.stderr
+                        )
+                    )
                 try:
                     if getattr(device, "port", None):
                         config.save_last_port(device.port, config_path)
@@ -218,8 +277,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         result = COMMANDS[args.command](device, args)
-    except (LookupError, TimeoutError, ValueError, RuntimeError,
-            OSError) as exc:
+    except (
+        LookupError,
+        TimeoutError,
+        ValueError,
+        RuntimeError,
+        OSError,
+    ) as exc:
         # OSError because `read` is the one command that opens a path the
         # user typed. Its whole pitch is telling them a file is damaged
         # rather than wrong; a missing one deserves the same sentence.

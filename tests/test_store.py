@@ -50,7 +50,8 @@ class TestTheSlotIsTheIdentity:
         again = store.add("P-RAM", 7, name="Invented", rating=4)
         assert again.added == first.added, (
             "re-adding is an edit, not a re-acquisition; the date is the "
-            "one ordering the user cannot reconstruct")
+            "one ordering the user cannot reconstruct"
+        )
 
     def test_regions_are_separate_spaces(self, store):
         """P-RAM 5 and P-ROM 5 are different slots with the same number."""
@@ -65,8 +66,9 @@ class TestUnfavouritingKeepsWhatTheUserTyped:
     note and the original date must survive it."""
 
     def test_a_toggle_cycle_keeps_everything(self, store):
-        store.add("P-RAM", 5, name="Invented",
-                  rating=4, tags="a, b", note="hello")
+        store.add(
+            "P-RAM", 5, name="Invented", rating=4, tags="a, b", note="hello"
+        )
         before = store.get("P-RAM", 5)
 
         assert store.toggle("P-RAM", 5) is False
@@ -110,9 +112,12 @@ class TestUnfavouritingKeepsWhatTheUserTyped:
                 note TEXT NOT NULL DEFAULT '',
                 added REAL NOT NULL DEFAULT 0,
                 PRIMARY KEY (bank_id, number));
-            """)
-        db.execute("INSERT INTO favorites (bank_id, number, name, rating) "
-                   "VALUES ('P-RAM', 7, 'Invented', 5)")
+            """
+        )
+        db.execute(
+            "INSERT INTO favorites (bank_id, number, name, rating) "
+            "VALUES ('P-RAM', 7, 'Invented', 5)"
+        )
         db.execute("PRAGMA user_version = 1")
         db.commit()
         db.close()
@@ -156,7 +161,8 @@ class TestNamesCanBeRefreshed:
         store.add("P-RAM", 0, name="")
         store.add("P-RAM", 1, name="Already Right")
         changed = store.refresh_names(
-            lambda bank, number: "Already Right" if number else "From Unit")
+            lambda bank, number: "Already Right" if number else "From Unit"
+        )
         assert changed == 1
         assert store.get("P-RAM", 0).name == "From Unit"
 
@@ -218,9 +224,17 @@ class TestTheCatalogKeysOnRegionNumbers:
 
         path = str(tmp_path / "cat.json")
         with open(path, "w", encoding="utf-8") as handle:
-            json.dump({"banks": {"P-RAM": [
-                {"pc": "not a number", "name": "Bad"},
-                {"pc": 1, "name": "Invented"}]}}, handle)
+            json.dump(
+                {
+                    "banks": {
+                        "P-RAM": [
+                            {"pc": "not a number", "name": "Bad"},
+                            {"pc": 1, "name": "Invented"},
+                        ]
+                    }
+                },
+                handle,
+            )
         assert len(cat.load(path)) == 1
 
 
@@ -255,19 +269,18 @@ class TestABoolIsNotANumber:
     def test_no_numeric_loader_accepts_true(self, tmp_path):
         offenders = []
         for name, fn in self._loaders():
-            key = name[len("load_"):]
+            key = name[len("load_") :]
             path = str(tmp_path / f"{key}.toml")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(f"{key} = true\n")
             if fn(path) is not None:
                 offenders.append(name)
-        assert not offenders, (
-            f"{offenders} accept a TOML boolean as a number")
+        assert not offenders, f"{offenders} accept a TOML boolean as a number"
 
     def test_no_numeric_loader_accepts_an_absurd_value(self, tmp_path):
         offenders = []
         for name, fn in self._loaders():
-            key = name[len("load_"):]
+            key = name[len("load_") :]
             path = str(tmp_path / f"{key}.toml")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(f"{key} = 9999\n")

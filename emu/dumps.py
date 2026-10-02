@@ -52,9 +52,11 @@ class Library:
     proteus_ids: int = 0
 
     def of(self, kind: str) -> Dict[int, List[int]]:
-        return {banks.Kind.PRESET: self.presets,
-                banks.Kind.HYPERPRESET: self.hyperpresets,
-                banks.Kind.MIDIMAP: self.midimaps}[kind]
+        return {
+            banks.Kind.PRESET: self.presets,
+            banks.Kind.HYPERPRESET: self.hyperpresets,
+            banks.Kind.MIDIMAP: self.midimaps,
+        }[kind]
 
     def names(self, kind: str = banks.Kind.PRESET) -> Dict[int, str]:
         out = {}
@@ -78,9 +80,12 @@ class Library:
         if self.corrupt:
             parts.append(f"{len(self.corrupt)} FAILED CHECKSUM")
         if self.other:
-            parts.append(", ".join(
-                f"{n}x {m.Command.name(c)}" for c, n in
-                sorted(self.other.items())))
+            parts.append(
+                ", ".join(
+                    f"{n}x {m.Command.name(c)}"
+                    for c, n in sorted(self.other.items())
+                )
+            )
         if self.foreign:
             parts.append(f"{self.foreign} foreign message(s)")
         return ", ".join(parts) or "nothing this program recognises"
@@ -100,7 +105,7 @@ def split_sysex(raw: bytes) -> List[bytes]:
         end = raw.find(b"\xf7", start)
         if end < 0:
             break
-        out.append(raw[start:end + 1])
+        out.append(raw[start : end + 1])
         cursor = end + 1
     return out
 
@@ -125,20 +130,22 @@ def read_bytes(raw: bytes) -> Library:
             library.proteus_ids += 1
         kind = _KIND_OF.get(packet.command)
         if kind is None:
-            library.other[packet.command] = \
+            library.other[packet.command] = (
                 library.other.get(packet.command, 0) + 1
+            )
             continue
         expected = m.Command.SIZES.get(packet.command)
         if expected is not None and len(message) != expected:
             library.corrupt.append(
-                f"{kind} {packet.number}: {len(message)} bytes, not "
-                f"{expected}")
+                f"{kind} {packet.number}: {len(message)} bytes, not {expected}"
+            )
             continue
         if m.checksum(packet.body) != message[-2]:
             library.corrupt.append(
                 f"{kind} {packet.number}: checksum "
                 f"{message[-2]:#04x}, computed "
-                f"{m.checksum(packet.body):#04x}")
+                f"{m.checksum(packet.body):#04x}"
+            )
             continue
         library.of(kind)[packet.number] = packet.words()
     return library

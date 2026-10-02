@@ -82,10 +82,21 @@ VIEW_LABELS = {
 }
 
 KEY_HINTS = (
-    "↑↓ move", "tab pane", "⏎ select on the unit", "r read names",
-    "/ search", "[ ] channel", "c set channel", "d device ID",
-    "f favourite", "F favourites view", "t tags", "n note", "i device",
-    "? help", "q quit",
+    "↑↓ move",
+    "tab pane",
+    "⏎ select on the unit",
+    "r read names",
+    "/ search",
+    "[ ] channel",
+    "c set channel",
+    "d device ID",
+    "f favourite",
+    "F favourites view",
+    "t tags",
+    "n note",
+    "i device",
+    "? help",
+    "q quit",
 )
 
 
@@ -113,7 +124,9 @@ def wrap_blocks(blocks, width: int, sep: str = _SEP) -> str:
 class KeyHints(Static):
     """The legend, wrapped to the window rather than truncated."""
 
-    DEFAULT_CSS = "KeyHints { height: auto; background: $panel; padding: 0 1; }"
+    DEFAULT_CSS = (
+        "KeyHints { height: auto; background: $panel; padding: 0 1; }"
+    )
 
     def on_mount(self) -> None:
         self._render_hints()
@@ -139,8 +152,10 @@ class ReportScreen(ModalScreen[None]):
     ReportScreen .body { height: 1fr; overflow-y: auto; }
     """
 
-    BINDINGS = [Binding("escape", "close", "Close"),
-                Binding("q", "close", "Close")]
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("q", "close", "Close"),
+    ]
 
     def __init__(self, title: str, body: str) -> None:
         super().__init__()
@@ -228,8 +243,14 @@ class EmorphedApp(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, device, *, catalog=None, favorites=None,
-                 config_path: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        device,
+        *,
+        catalog=None,
+        favorites=None,
+        config_path: Optional[str] = None,
+    ) -> None:
         super().__init__()
         self.device = device
         self.catalog = catalog if catalog is not None else cat.empty()
@@ -260,32 +281,48 @@ class EmorphedApp(App):
     def on_mount(self) -> None:
         self.title = "emorphed"
         table = self.query_one("#bank-table", DataTable)
-        for label, key in (("region", "bank"), ("n", "n"), ("", "src"),
-                           ("♥", "fav")):
+        for label, key in (
+            ("region", "bank"),
+            ("n", "n"),
+            ("", "src"),
+            ("♥", "fav"),
+        ):
             table.add_column(label, key=key)
         for bank_id in self._bank_ids:
             entry = banks.region(bank_id)
             marked = len(self._favorite_keys(bank_id))
-            table.add_row(entry.label, str(entry.count),
-                          ("card" if entry.needs_card
-                           else ("" if entry.writable else "rom")),
-                          # blank rather than "0": a column of zeroes is
-                          # noise, and the eye wants the few that differ
-                          str(marked) if marked else "", key=bank_id)
+            table.add_row(
+                entry.label,
+                str(entry.count),
+                (
+                    "card"
+                    if entry.needs_card
+                    else ("" if entry.writable else "rom")
+                ),
+                # blank rather than "0": a column of zeroes is
+                # noise, and the eye wants the few that differ
+                str(marked) if marked else "",
+                key=bank_id,
+            )
 
         slots = self.query_one("#slot-table", DataTable)
         # The favourite marker leads the row rather than trailing it: it is
         # a gutter mark the eye runs down, and gluing it to the name would
         # carry it into anything that sorts or searches.
-        for label, key in (("♥", "fav"), ("#", "num"), ("name", "name"),
-                           ("index", "index")):
+        for label, key in (
+            ("♥", "fav"),
+            ("#", "num"),
+            ("name", "name"),
+            ("index", "index"),
+        ):
             slots.add_column(label, key=key)
         self._fill(self._current_bank)
         table.focus()
         self.notify_status(
-            f"{len(self.catalog)} names from the catalog" if self.catalog
+            f"{len(self.catalog)} names from the catalog"
+            if self.catalog
             else "no catalog -- numbers only. Build one with "
-                 "tools/extract_catalog.py, or press r to read from the unit."
+            "tools/extract_catalog.py, or press r to read from the unit."
         )
 
     # --- filling ------------------------------------------------------------
@@ -312,8 +349,7 @@ class EmorphedApp(App):
             numbers = wanted.get(bank_id)
             if not numbers:
                 continue
-            out.extend(e for e in banks.slots(bank_id)
-                       if e.number in numbers)
+            out.extend(e for e in banks.slots(bank_id) if e.number in numbers)
         return out
 
     def _visible(self, bank_id: str) -> List[banks.Slot]:
@@ -325,7 +361,6 @@ class EmorphedApp(App):
             entries = [e for e in entries if e.number in marked]
         return entries
 
-
     def _cursor_entry(self):
         """The row under the cursor, or None."""
         table = self.query_one("#slot-table", DataTable)
@@ -333,7 +368,6 @@ class EmorphedApp(App):
         if not self._current or row is None or row >= len(self._current):
             return None
         return self._current[row]
-
 
     # --- the send channel ---------------------------------------------------
 
@@ -346,8 +380,9 @@ class EmorphedApp(App):
         try:
             self.device.channel = channel
         except Exception:
-            self.notify_status("this device has no settable channel",
-                               refused=True)
+            self.notify_status(
+                "this device has no settable channel", refused=True
+            )
             return
         self._remember_channel(channel)
         self.notify_status(f"sending on MIDI channel {channel + 1}")
@@ -372,6 +407,7 @@ class EmorphedApp(App):
     def action_pick_device_id(self) -> None:
         """Set the SysEx device ID. Not the MIDI channel: this instrument
         has both and they are set in different places on it."""
+
         def done(text) -> None:
             if not text:
                 return
@@ -388,8 +424,12 @@ class EmorphedApp(App):
             self.notify_status(f"device ID {value}")
 
         self.push_screen(
-            PromptScreen("SysEx device ID (0-15), not the MIDI channel:",
-                         str(getattr(self.device, "device_id", 0))), done)
+            PromptScreen(
+                "SysEx device ID (0-15), not the MIDI channel:",
+                str(getattr(self.device, "device_id", 0)),
+            ),
+            done,
+        )
 
     def _remember_device_id(self, value: int) -> None:
         if self._config_path is None:
@@ -417,7 +457,8 @@ class EmorphedApp(App):
 
         self.push_screen(
             PromptScreen("MIDI channel (1-16):", str(self._channel() + 1)),
-            apply)
+            apply,
+        )
 
     def action_toggle_favorite(self) -> None:
         """Mark or unmark the slot under the cursor. Sends no MIDI."""
@@ -444,7 +485,6 @@ class EmorphedApp(App):
         self.notify_status(f"{'favourited' if now else 'unfavourited'} {name}")
         self._refill_keeping_place()
 
-
     def _favourite_under_cursor(self):
         """The favourite row for the slot under the cursor, if there is one.
 
@@ -467,8 +507,9 @@ class EmorphedApp(App):
         if where is None:
             return
         if existing is None:
-            self.notify_status("not a favourite yet -- press f first",
-                               refused=True)
+            self.notify_status(
+                "not a favourite yet -- press f first", refused=True
+            )
             return
 
         def apply(value):
@@ -478,16 +519,18 @@ class EmorphedApp(App):
             self._refill_keeping_place()
             self.notify_status("tags set")
 
-        self.push_screen(PromptScreen("Tags (comma separated):",
-                                  existing.tags), apply)
+        self.push_screen(
+            PromptScreen("Tags (comma separated):", existing.tags), apply
+        )
 
     def action_edit_note(self) -> None:
         where, existing = self._favourite_under_cursor()
         if where is None:
             return
         if existing is None:
-            self.notify_status("not a favourite yet -- press f first",
-                               refused=True)
+            self.notify_status(
+                "not a favourite yet -- press f first", refused=True
+            )
             return
 
         def apply(value):
@@ -516,11 +559,15 @@ class EmorphedApp(App):
         if self.view_mode == VIEW_ALL:
             self.notify_status(VIEW_LABELS[self.view_mode])
         elif not shown:
-            where = ("this bank" if self.view_mode == VIEW_BANK_FAVOURITES
-                     else "any bank")
+            where = (
+                "this bank"
+                if self.view_mode == VIEW_BANK_FAVOURITES
+                else "any bank"
+            )
             self.notify_status(
                 f"{VIEW_LABELS[self.view_mode]} - nothing favourited in "
-                f"{where} yet")
+                f"{where} yet"
+            )
         else:
             self.notify_status(f"{VIEW_LABELS[self.view_mode]} - {shown}")
 
@@ -540,22 +587,25 @@ class EmorphedApp(App):
         try:
             table.clear()
             for entry in self._current:
-                name = self.catalog.display_name(entry.bank_id,
-                                                 entry.number)
+                name = self.catalog.display_name(entry.bank_id, entry.number)
                 if self.catalog.differs(entry.bank_id, entry.number):
                     shown = f"[b]{name}[/b] [dim]*[/dim]"
-                elif self.catalog.is_live(entry.bank_id,
-                                          entry.number):
+                elif self.catalog.is_live(entry.bank_id, entry.number):
                     shown = f"[b]{name}[/b]"
                 else:
                     shown = name
-                here = (self._favorite_keys(entry.bank_id)
-                        if self.view_mode == VIEW_ALL_FAVOURITES else marked)
+                here = (
+                    self._favorite_keys(entry.bank_id)
+                    if self.view_mode == VIEW_ALL_FAVOURITES
+                    else marked
+                )
                 table.add_row(
                     "[b]♥[/b]" if entry.number in here else "",
-                    f"{entry.number:03d}", shown,
+                    f"{entry.number:03d}",
+                    shown,
                     str(entry.index),
-                    key=entry.key)
+                    key=entry.key,
+                )
         finally:
             self._filling = False
         self._detail(0)
@@ -566,22 +616,27 @@ class EmorphedApp(App):
             return
         entry = self._current[row]
         name = self.catalog.display_name(entry.bank_id, entry.number)
-        source = ("read from the unit"
-                  if self.catalog.is_live(entry.bank_id, entry.number)
-                  else "from the catalog")
+        source = (
+            "read from the unit"
+            if self.catalog.is_live(entry.bank_id, entry.number)
+            else "from the catalog"
+        )
         if entry.region.needs_card:
             source += " · needs a card fitted"
         if entry.kind == banks.Kind.PRESET:
             bank = banks.bank_of(entry.kind, entry.index)
-            how = (f"Bank Select (CC32) [b]{bank}[/b] · Program Change "
-                   f"[b]{entry.number}[/b] [dim](under the default "
-                   f"Program Map)[/dim]")
+            how = (
+                f"Bank Select (CC32) [b]{bank}[/b] · Program Change "
+                f"[b]{entry.number}[/b] [dim](under the default "
+                f"Program Map)[/dim]"
+            )
         elif entry.kind == banks.Kind.MIDIMAP:
-            how = ("[dim]no program change reaches a midimap; System "
-                   "Exclusive is the only way[/dim]")
+            how = (
+                "[dim]no program change reaches a midimap; System "
+                "Exclusive is the only way[/dim]"
+            )
         else:
-            how = ("[dim]selected as a preset in the hyperpreset "
-                   "range[/dim]")
+            how = "[dim]selected as a preset in the hyperpreset range[/dim]"
         self.query_one("#detail", Static).update(
             f"[b]{entry.display}[/b]  {name}   [dim]index "
             f"{entry.index}[/dim]\n{how} · {source}"
@@ -630,7 +685,9 @@ class EmorphedApp(App):
             # change aimed at one would land on a preset instead.
             self.notify_status(
                 f"a {entry.kind} is not selected with a program change; "
-                f"only presets are", refused=True)
+                f"only presets are",
+                refused=True,
+            )
             return
         # Set here, not in the worker. A @work(thread=True) method returns
         # at once and would set the flag on its own thread, so two quick
@@ -646,7 +703,8 @@ class EmorphedApp(App):
                 self.device.select(entry)
         except Exception as exc:
             self.call_from_thread(
-                self.notify_status, f"select: {exc}", refused=True)
+                self.notify_status, f"select: {exc}", refused=True
+            )
             return
         finally:
             self._busy = False
@@ -655,14 +713,15 @@ class EmorphedApp(App):
             f"selected {entry.display} — Bank Select (CC32) "
             f"{banks.bank_of(entry.kind, entry.index)} then Program Change "
             f"{entry.number} on channel {self.device.channel + 1}; "
-            f"that number reaches it under the default Program Map")
+            f"that number reaches it under the default Program Map",
+        )
 
     def action_read_names(self) -> None:
         if self._busy:
             self.notify_status("busy", refused=True)
             return
         entry = banks.region(self._current_bank)
-        self._busy = True          # main thread; see action_select
+        self._busy = True  # main thread; see action_select
         self._read_worker(entry.kind)
 
     @work(thread=True)
@@ -675,12 +734,14 @@ class EmorphedApp(App):
         try:
             self.call_from_thread(
                 self.notify_status,
-                f"asking for every {kind} name in one message (silent)...")
+                f"asking for every {kind} name in one message (silent)...",
+            )
             with self._lock:
                 names = self.device.names(kind)
         except Exception as exc:
             self.call_from_thread(
-                self.notify_status, f"read: {exc}", refused=True)
+                self.notify_status, f"read: {exc}", refused=True
+            )
             return
         finally:
             self._busy = False
@@ -701,19 +762,23 @@ class EmorphedApp(App):
             for number in range(region.count):
                 if cursor >= len(names):
                     break
-                self.catalog.set_live_name(region.id, number,
-                                           names[cursor].rstrip())
+                self.catalog.set_live_name(
+                    region.id, number, names[cursor].rstrip()
+                )
                 cursor += 1
                 adopted += 1
         if self.favorites is not None:
             self.favorites.refresh_names(
-                lambda bank, number: self.catalog.live_name(bank, number))
+                lambda bank, number: self.catalog.live_name(bank, number)
+            )
         self._fill(self._current_bank)
         short = ""
         expected = sum(r.count for r in banks.regions(kind))
         if adopted < expected:
-            short = (f"; {expected - adopted} short of {expected}, which "
-                     f"is what no card fitted looks like")
+            short = (
+                f"; {expected - adopted} short of {expected}, which "
+                f"is what no card fitted looks like"
+            )
         self.notify_status(f"read {adopted} {kind} name(s){short}")
 
     def action_search(self) -> None:
@@ -730,8 +795,9 @@ class EmorphedApp(App):
                     entry = banks.slot(bank_id, program_change)
                 except LookupError:
                     continue
-                lines.append(f"{entry.display:<6} {name:<12} "
-                             f"PC {entry.number:>3}")
+                lines.append(
+                    f"{entry.display:<6} {name:<12} PC {entry.number:>3}"
+                )
             if len(hits) > 400:
                 lines.append(f"... and {len(hits) - 400} more")
             self.push_screen(ReportScreen("Search", "\n".join(lines)))
@@ -753,22 +819,28 @@ class EmorphedApp(App):
                     configuration = None
         except Exception as exc:
             self.call_from_thread(
-                self.notify_status, f"device: {exc}", refused=True)
+                self.notify_status, f"device: {exc}", refused=True
+            )
             return
         self.call_from_thread(self._show_info, version, configuration)
 
     def _show_info(self, version, configuration) -> None:
-        lines = [f"connection      {self.device.description}",
-                 f"device ID       {self.device.device_id}",
-                 f"MIDI channel    {self.device.channel + 1}", ""]
-        lines.append("manufacturer    "
-                     + f"{msg.EMU_ID:02X}  (E-mu)")
+        lines = [
+            f"connection      {self.device.description}",
+            f"device ID       {self.device.device_id}",
+            f"MIDI channel    {self.device.channel + 1}",
+            "",
+        ]
+        lines.append("manufacturer    " + f"{msg.EMU_ID:02X}  (E-mu)")
         lines.append(f"product         {msg.MORPHEUS_ID:02X}  (Morpheus)")
-        lines.append("version bytes   "
-                     + " ".join(f"{b:02X}" for b in version))
+        lines.append(
+            "version bytes   " + " ".join(f"{b:02X}" for b in version)
+        )
         if configuration is not None:
-            lines.append("configuration   "
-                         + " ".join(f"{b:02X}" for b in configuration))
+            lines.append(
+                "configuration   "
+                + " ".join(f"{b:02X}" for b in configuration)
+            )
         lines.append("")
         lines.append("The device ID and the MIDI channel are different")
         lines.append("things and are set in different places on the unit.")
@@ -779,12 +851,18 @@ class EmorphedApp(App):
         lines.append("whether unnumbered replies carry one is not")
         lines.append("established. See TODO item 1.")
         lines.append("")
-        lines.append(f"catalog         {len(self.catalog)} names"
-                     + (f" from {self.catalog.source}"
-                        if self.catalog.source else ""))
-        lines.append("favourites      "
-                     + (f"{len(self.favorites)}"
-                        if self.favorites is not None else "(none open)"))
+        lines.append(
+            f"catalog         {len(self.catalog)} names"
+            + (f" from {self.catalog.source}" if self.catalog.source else "")
+        )
+        lines.append(
+            "favourites      "
+            + (
+                f"{len(self.favorites)}"
+                if self.favorites is not None
+                else "(none open)"
+            )
+        )
         self.push_screen(ReportScreen("Device", "\n".join(lines)))
 
     def action_help(self) -> None:
@@ -837,22 +915,38 @@ Keys
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="emorphed",
-        description="Browse an E-mu Morpheus.")
+        prog="emorphed", description="Browse an E-mu Morpheus."
+    )
     parser.add_argument("--port")
     parser.add_argument("--recv-port")
-    parser.add_argument("--demo", action="store_true",
-                        help="built-in demo device; opens no MIDI ports")
-    parser.add_argument("--device-id", type=int, default=None,
-                        help="SysEx device ID 0-15; not the MIDI channel")
-    parser.add_argument("--midi-channel", type=int, default=None,
-                        help="the unit's global channel, 1-16")
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="built-in demo device; opens no MIDI ports",
+    )
+    parser.add_argument(
+        "--device-id",
+        type=int,
+        default=None,
+        help="SysEx device ID 0-15; not the MIDI channel",
+    )
+    parser.add_argument(
+        "--midi-channel",
+        type=int,
+        default=None,
+        help="the unit's global channel, 1-16",
+    )
     parser.add_argument("--catalog", default=None)
-    parser.add_argument("--config", default=None,
-                        help="settings cache (default: ./config.toml)")
-    parser.add_argument("--favorites", default=None,
-                        help="favourites database (default: "
-                             "the per-platform data directory)")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="settings cache (default: ./config.toml)",
+    )
+    parser.add_argument(
+        "--favorites",
+        default=None,
+        help="favourites database (default: the per-platform data directory)",
+    )
     return parser
 
 
@@ -877,20 +971,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         # time, so it does not have to be given again every run.
         remembered = cfg.load_channel(config_path)
         try:
-            channel = ((args.midi_channel - 1) if args.midi_channel
-                       else (remembered if remembered is not None else 0))
-            device_id = (args.device_id if args.device_id is not None
-                         else (cfg.load_device_id(config_path) or 0))
+            channel = (
+                (args.midi_channel - 1)
+                if args.midi_channel
+                else (remembered if remembered is not None else 0)
+            )
+            device_id = (
+                args.device_id
+                if args.device_id is not None
+                else (cfg.load_device_id(config_path) or 0)
+            )
             if args.port:
                 device = b.MorpheusBridge.open(
                     args.port,
-                    recv_port=(args.recv_port
-                               or cfg.load_last_recv_port(config_path)),
-                    device_id=device_id, channel=channel)
+                    recv_port=(
+                        args.recv_port or cfg.load_last_recv_port(config_path)
+                    ),
+                    device_id=device_id,
+                    channel=channel,
+                )
             else:
                 device = b.MorpheusBridge.autodetect(
-                    on_try=lambda n: print(f"  probing {n}...",
-                                           file=sys.stderr))
+                    on_try=lambda n: print(
+                        f"  probing {n}...", file=sys.stderr
+                    )
+                )
         except Exception as exc:
             sys.exit(f"error: {exc}")
 
@@ -917,8 +1022,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         # at all. Every other startup failure here leaves by sys.exit; these
         # two used to print a traceback.
         raise SystemExit(f"error: {exc}")
-    app = EmorphedApp(device, catalog=cat.load(args.catalog),
-                      favorites=store, config_path=config_path)
+    app = EmorphedApp(
+        device,
+        catalog=cat.load(args.catalog),
+        favorites=store,
+        config_path=config_path,
+    )
     try:
         app.run()
     finally:
