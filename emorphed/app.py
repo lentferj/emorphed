@@ -51,7 +51,7 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -63,6 +63,8 @@ from textual.widgets import DataTable, Header, Input, Label, Static
 from emu import banks
 from emu import catalog as cat
 from emu import messages as msg
+from emu.device import Device
+from emu.favorites import Favorite, Favorites
 
 
 __all__ = ["EmorphedApp", "main", "build_parser", "KEY_HINTS", "wrap_blocks"]
@@ -100,7 +102,7 @@ KEY_HINTS = (
 )
 
 
-def wrap_blocks(blocks, width: int, sep: str = _SEP) -> str:
+def wrap_blocks(blocks: Sequence[str], width: int, sep: str = _SEP) -> str:
     """Pack hints into lines no wider than ``width``.
 
     Ported from the siblings. Breaks happen only between blocks, so a hint
@@ -205,7 +207,7 @@ class PromptScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
-class EmorphedApp(App):
+class EmorphedApp(App[None]):
     """The browser."""
 
     CSS = """
@@ -245,10 +247,10 @@ class EmorphedApp(App):
 
     def __init__(
         self,
-        device,
+        device: Device,
         *,
-        catalog=None,
-        favorites=None,
+        catalog: Optional[cat.Catalog] = None,
+        favorites: Optional[Favorites] = None,
         config_path: Optional[str] = None,
     ) -> None:
         super().__init__()
@@ -327,7 +329,7 @@ class EmorphedApp(App):
 
     # --- filling ------------------------------------------------------------
 
-    def _favorite_keys(self, bank_id: str) -> set:
+    def _favorite_keys(self, bank_id: str) -> Set[int]:
         if self.favorites is None:
             return set()
         return self.favorites.keys_for_bank(bank_id)
@@ -341,10 +343,10 @@ class EmorphedApp(App):
         """
         if self.favorites is None:
             return []
-        wanted = {}
+        wanted: Dict[str, Set[int]] = {}
         for favourite in self.favorites.all(order="bank"):
             wanted.setdefault(favourite.bank_id, set()).add(favourite.number)
-        out = []
+        out: List[banks.Slot] = []
         for bank_id in banks.region_ids():
             numbers = wanted.get(bank_id)
             if not numbers:
@@ -361,7 +363,7 @@ class EmorphedApp(App):
             entries = [e for e in entries if e.number in marked]
         return entries
 
-    def _cursor_entry(self):
+    def _cursor_entry(self) -> Optional[banks.Slot]:
         """The row under the cursor, or None."""
         table = self.query_one("#slot-table", DataTable)
         row = table.cursor_row
@@ -408,7 +410,7 @@ class EmorphedApp(App):
         """Set the SysEx device ID. Not the MIDI channel: this instrument
         has both and they are set in different places on it."""
 
-        def done(text) -> None:
+        def done(text: Optional[str]) -> None:
             if not text:
                 return
             try:
@@ -442,7 +444,7 @@ class EmorphedApp(App):
             pass
 
     def action_pick_channel(self) -> None:
-        def apply(text):
+        def apply(text: Optional[str]) -> None:
             if not text:
                 return
             try:
@@ -485,7 +487,9 @@ class EmorphedApp(App):
         self.notify_status(f"{'favourited' if now else 'unfavourited'} {name}")
         self._refill_keeping_place()
 
-    def _favourite_under_cursor(self):
+    def _favourite_under_cursor(
+        self,
+    ) -> Tuple[Optional[Tuple[str, int]], Optional[Favorite]]:
         """The favourite row for the slot under the cursor, if there is one.
 
         Tags and notes hang off a favourite, so there is nothing to attach
@@ -503,6 +507,9 @@ class EmorphedApp(App):
         return (bank_id, number), self.favorites.get(bank_id, number)
 
     def action_edit_tags(self) -> None:
+        if self.favorites is None:
+            return
+        favorites = self.favorites
         where, existing = self._favourite_under_cursor()
         if where is None:
             return
@@ -512,10 +519,10 @@ class EmorphedApp(App):
             )
             return
 
-        def apply(value):
+        def apply(value: Optional[str]) -> None:
             if value is None:
                 return
-            self.favorites.set_tags(where[0], where[1], value)
+            favorites.set_tags(where[0], where[1], value)
             self._refill_keeping_place()
             self.notify_status("tags set")
 
@@ -524,6 +531,9 @@ class EmorphedApp(App):
         )
 
     def action_edit_note(self) -> None:
+        if self.favorites is None:
+            return
+        favorites = self.favorites
         where, existing = self._favourite_under_cursor()
         if where is None:
             return
@@ -533,10 +543,10 @@ class EmorphedApp(App):
             )
             return
 
-        def apply(value):
+        def apply(value: Optional[str]) -> None:
             if value is None:
                 return
-            self.favorites.set_note(where[0], where[1], value)
+            favorites.set_note(where[0], where[1], value)
             self._refill_keeping_place()
             self.notify_status("note set")
 
@@ -648,7 +658,9 @@ class EmorphedApp(App):
 
     # --- navigation ---------------------------------------------------------
 
-    def on_data_table_row_highlighted(self, event) -> None:
+    def on_data_table_row_highlighted(
+        self, event: DataTable.RowHighlighted
+    ) -> None:
         if self._filling:
             return
         if event.data_table.id == "bank-table":
@@ -658,7 +670,7 @@ class EmorphedApp(App):
         elif event.data_table.id == "slot-table":
             self._detail(event.cursor_row)
 
-    def on_data_table_row_selected(self, event) -> None:
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter on a slot. It arrives here, not as a binding."""
         if event.data_table.id == "slot-table":
             self.action_select()
@@ -747,7 +759,7 @@ class EmorphedApp(App):
             self._busy = False
         self.call_from_thread(self._adopt_kind, kind, names)
 
-    def _adopt_kind(self, kind: str, names) -> None:
+    def _adopt_kind(self, kind: str, names: List[str]) -> None:
         """File a flat list of names back into the regions it spans.
 
         The reply is "every preset, in the order they appear" -- one list
@@ -782,7 +794,7 @@ class EmorphedApp(App):
         self.notify_status(f"read {adopted} {kind} name(s){short}")
 
     def action_search(self) -> None:
-        def done(text) -> None:
+        def done(text: Optional[str]) -> None:
             if not text:
                 return
             hits = self.catalog.search(text)
@@ -790,7 +802,7 @@ class EmorphedApp(App):
                 self.notify_status(f"nothing matching {text!r}")
                 return
             lines = [f"{len(hits)} match(es) for {text!r}", ""]
-            for bank_id, program_change, name in hits[:400]:
+            for bank_id, program_change, name, _disagrees in hits[:400]:
                 try:
                     entry = banks.slot(bank_id, program_change)
                 except LookupError:
@@ -824,7 +836,9 @@ class EmorphedApp(App):
             return
         self.call_from_thread(self._show_info, version, configuration)
 
-    def _show_info(self, version, configuration) -> None:
+    def _show_info(
+        self, version: List[int], configuration: Optional[List[int]]
+    ) -> None:
         lines = [
             f"connection      {self.device.description}",
             f"device ID       {self.device.device_id}",
@@ -960,6 +974,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.device_id is not None and not 0 <= args.device_id <= 15:
         sys.exit("error: --device-id is 0-15")
 
+    device: Optional[Device] = None
     if args.demo:
         from emorphed.demo import DemoDevice
 
@@ -982,7 +997,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 else (cfg.load_device_id(config_path) or 0)
             )
             if args.port:
-                device = b.MorpheusBridge.open(
+                bridge = b.MorpheusBridge.open(
                     args.port,
                     recv_port=(
                         args.recv_port or cfg.load_last_recv_port(config_path)
@@ -991,23 +1006,24 @@ def main(argv: Optional[List[str]] = None) -> int:
                     channel=channel,
                 )
             else:
-                device = b.MorpheusBridge.autodetect(
+                bridge = b.MorpheusBridge.autodetect(
                     on_try=lambda n: print(
                         f"  probing {n}...", file=sys.stderr
                     )
                 )
+            device = bridge
         except Exception as exc:
             sys.exit(f"error: {exc}")
 
         # Remember whatever channel is actually in use -- which after an
         # autodetect is the one the unit reported, not the one asked for.
         try:
-            cfg.save_channel(getattr(device, "channel", 0), config_path)
-            if getattr(device, "port", None):
-                cfg.save_last_port(device.port, config_path)
-                cfg.save_device_id(device.device_id, config_path)
-            recv = getattr(device, "recv_port", None)
-            if recv and recv != getattr(device, "port", None):
+            cfg.save_channel(bridge.channel, config_path)
+            if bridge.port:
+                cfg.save_last_port(bridge.port, config_path)
+                cfg.save_device_id(bridge.device_id, config_path)
+            recv = bridge.recv_port
+            if recv and recv != bridge.port:
                 cfg.save_last_recv_port(recv, config_path)
         except OSError:
             pass

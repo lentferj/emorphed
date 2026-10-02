@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
 from emu import banks
 from emu import catalog as cat
 from emu import config
 from emu import dumps
 from emu import messages as m
+from emu.device import Device
 
 __all__ = ["main", "build_parser"]
 
@@ -48,7 +49,7 @@ def _table(rows: Sequence[Sequence[str]], headers: Sequence[str]) -> str:
     return "\n".join(out)
 
 
-def _cmd_regions(_device, _args) -> None:
+def _cmd_regions(_device: Optional[Device], _args: argparse.Namespace) -> None:
     rows = []
     for entry in banks.regions():
         rows.append(
@@ -75,7 +76,7 @@ def _cmd_regions(_device, _args) -> None:
     )
 
 
-def _cmd_list(_device, args) -> None:
+def _cmd_list(_device: Optional[Device], args: argparse.Namespace) -> None:
     entry = banks.region(args.region)
     catalog = cat.load(getattr(args, "catalog", None))
     rows = []
@@ -93,7 +94,7 @@ def _cmd_list(_device, args) -> None:
         print(f"\n{entry.note}")
 
 
-def _cmd_names(device, args) -> None:
+def _cmd_names(device: Device, args: argparse.Namespace) -> None:
     """Every name of one kind, in one exchange. Silent."""
     names = device.names(args.kind)
     rows = [[f"{n:03d}", text.rstrip()] for n, text in enumerate(names)]
@@ -101,7 +102,7 @@ def _cmd_names(device, args) -> None:
     print(_table(rows, ["#", "name"]))
 
 
-def _cmd_status(device, _args) -> None:
+def _cmd_status(device: Device, _args: argparse.Namespace) -> None:
     """Ask the unit its version and what is fitted. Silent."""
     version = device.version()
     print(f"port            {device.description}")
@@ -114,7 +115,7 @@ def _cmd_status(device, _args) -> None:
         print(f"configuration   unavailable ({exc})")
 
 
-def _cmd_select(device, args) -> int:
+def _cmd_select(device: Device, args: argparse.Namespace) -> int:
     """Select a preset. **This makes the unit play.**"""
     try:
         target = banks.slot(args.region, args.number)
@@ -142,7 +143,7 @@ def _cmd_select(device, args) -> int:
     return 0
 
 
-def _cmd_read(_device, args) -> None:
+def _cmd_read(_device: Optional[Device], args: argparse.Namespace) -> None:
     """Read a .syx dump. No hardware."""
     library = dumps.read_file(args.file)
     print(f"{args.file}: {library.summary()}")
@@ -209,7 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-COMMANDS = {
+COMMANDS: Dict[str, Callable[..., Optional[int]]] = {
     "regions": _cmd_regions,
     "list": _cmd_list,
     "names": _cmd_names,
@@ -237,7 +238,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not 0 <= device_id <= 15:
         raise SystemExit("error: --device-id is 0-15")
 
-    device = None
+    device: Optional[Device] = None
     if args.command not in OFFLINE:
         if args.demo:
             from emorphed.demo import DemoDevice
@@ -248,7 +249,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
             try:
                 if args.port:
-                    device = b.MorpheusBridge.open(
+                    bridge = b.MorpheusBridge.open(
                         args.port,
                         recv_port=(
                             args.recv_port
@@ -258,17 +259,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                         channel=channel,
                     )
                 else:
-                    device = b.MorpheusBridge.autodetect(
+                    bridge = b.MorpheusBridge.autodetect(
                         on_try=lambda n: print(
                             f"  probing {n}...", file=sys.stderr
                         )
                     )
+                device = bridge
                 try:
-                    if getattr(device, "port", None):
-                        config.save_last_port(device.port, config_path)
-                        config.save_device_id(device.device_id, config_path)
-                    recv = getattr(device, "recv_port", None)
-                    if recv and recv != getattr(device, "port", None):
+                    if bridge.port:
+                        config.save_last_port(bridge.port, config_path)
+                        config.save_device_id(bridge.device_id, config_path)
+                    recv = bridge.recv_port
+                    if recv and recv != bridge.port:
                         config.save_last_recv_port(recv, config_path)
                 except OSError:
                     pass

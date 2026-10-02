@@ -41,7 +41,7 @@ Two things from the manual that the code has to respect:
 from __future__ import annotations
 
 import time
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from emu import banks
 from emu import messages as m
@@ -76,7 +76,7 @@ BANK_TIMEOUT = 40.0
 PRESET_GAP = 0.100
 
 
-def _rtmidi():
+def _rtmidi() -> Any:
     try:
         import rtmidi
     except ImportError as exc:  # pragma: no cover
@@ -109,8 +109,8 @@ class MorpheusBridge:
 
     def __init__(
         self,
-        midi_in,
-        midi_out,
+        midi_in: Any,
+        midi_out: Any,
         *,
         device_id: int = 0,
         channel: int = 0,
@@ -184,7 +184,7 @@ class MorpheusBridge:
     def __enter__(self) -> "MorpheusBridge":
         return self
 
-    def __exit__(self, *_exc) -> None:
+    def __exit__(self, *_exc: Any) -> None:
         self.close()
 
     # --- the wire -----------------------------------------------------------

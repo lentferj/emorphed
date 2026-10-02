@@ -24,7 +24,7 @@ bridge, so it is safe beside a session driving hardware.
 from __future__ import annotations
 
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from emu import banks
 from emu import messages as m
@@ -106,7 +106,7 @@ class DemoDevice:
         self._tick()
         return [1 if self.card else 0]
 
-    def _regions(self, kind: str):
+    def _regions(self, kind: str) -> Iterator[banks.Region]:
         for region in banks.regions(kind):
             if region.needs_card and not self.card:
                 continue

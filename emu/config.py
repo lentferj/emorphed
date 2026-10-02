@@ -36,12 +36,8 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Optional, Tuple
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
-    tomllib = None
+import tomllib
+from typing import Any, Optional, Tuple
 
 __all__ = [
     "DEFAULT_PATH",
@@ -60,8 +56,8 @@ DEFAULT_PATH = "config.toml"
 _warned = False
 
 
-def _read(path: str) -> Tuple[dict, str]:
-    if not os.path.exists(path) or tomllib is None:
+def _read(path: str) -> Tuple[dict[str, Any], str]:
+    if not os.path.exists(path):
         return {}, "ok"
     try:
         with open(path, "rb") as handle:
@@ -107,7 +103,7 @@ def _toml_string(value: str) -> str:
     return "".join(out)
 
 
-def _update(path: str, **changes) -> None:
+def _update(path: str, **changes: Any) -> None:
     global _warned
     data, status = _read(path)
     if status == "unreadable":

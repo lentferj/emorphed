@@ -147,6 +147,8 @@ def read_bytes(raw: bytes) -> Library:
                 f"{m.checksum(packet.body):#04x}"
             )
             continue
+        if packet.number is None:
+            continue
         library.of(kind)[packet.number] = packet.words()
     return library
 

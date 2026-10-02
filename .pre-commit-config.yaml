@@ -14,7 +14,7 @@ repos:
     rev: v2.4.0
     hooks:
       - id: mypy
-        additional_dependencies: ["textual>=0.40"]
+        additional_dependencies: ["textual>=0.40", "pytest>=9.1.1"]
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
     hooks:

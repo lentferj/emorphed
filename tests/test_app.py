@@ -17,8 +17,11 @@
 
 import ast
 import os
+from pathlib import Path
+from collections.abc import Iterator
 
 import pytest
+from textual.widgets import DataTable
 
 from emu import banks
 from emu import catalog as cat
@@ -28,23 +31,32 @@ from emorphed.demo import DemoDevice
 
 
 @pytest.fixture
-def app():
-    return EmorphedApp(DemoDevice(), catalog=cat.empty())
+def device() -> DemoDevice:
+    return DemoDevice()
+
+
+@pytest.fixture
+def app(device: DemoDevice) -> EmorphedApp:
+    return EmorphedApp(device, catalog=cat.empty())
 
 
 class TestStartup:
-    async def test_both_panes_fill(self, app):
+    async def test_both_panes_fill(self, app: EmorphedApp) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.query_one("#bank-table").row_count == len(banks.REGIONS)
-            assert app.query_one("#slot-table").row_count == 128
+            assert app.query_one("#bank-table", DataTable).row_count == len(
+                banks.REGIONS
+            )
+            assert app.query_one("#slot-table", DataTable).row_count == 128
 
 
 class TestCursorIsSilent:
     """The property that decides whether this can sit open next to a
     running sequencer. First test in every sibling project."""
 
-    async def test_moving_in_the_slot_pane_sends_nothing(self, app):
+    async def test_moving_in_the_slot_pane_sends_nothing(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app.query_one("#slot-table").focus()
@@ -52,49 +64,59 @@ class TestCursorIsSilent:
                 await pilot.press("down")
             await pilot.press("end")
             await pilot.pause()
-            assert app.device.selected_log == []
+            assert device.selected_log == []
 
-    async def test_moving_between_regions_sends_nothing(self, app):
+    async def test_moving_between_regions_sends_nothing(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app.query_one("#bank-table").focus()
             for _ in range(len(banks.REGIONS) + 2):
                 await pilot.press("down")
             await pilot.pause()
-            assert app.device.selected_log == []
+            assert device.selected_log == []
 
-    async def test_reading_names_sends_no_program_change(self, app):
+    async def test_reading_names_sends_no_program_change(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("r")
             for _ in range(20):
                 await pilot.pause()
-            assert app.device.selected_log == []
+            assert device.selected_log == []
 
-    async def test_cycling_the_view_sends_nothing(self, app):
+    async def test_cycling_the_view_sends_nothing(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             for _ in range(4):
                 await pilot.press("F")
             await pilot.pause()
-            assert app.device.selected_log == []
+            assert device.selected_log == []
 
 
 class TestOnlyPresetsAreSelected:
     """A midimap has no program change. One aimed at it would land on a
     preset instead, so Enter refuses before anything is sent."""
 
-    async def test_enter_on_a_preset_selects(self, app):
+    async def test_enter_on_a_preset_selects(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app.query_one("#slot-table").focus()
             await pilot.press("enter")
             for _ in range(8):
                 await pilot.pause()
-            assert len(app.device.selected_log) == 1
-            assert app.device.selected_log[0][0].kind == banks.Kind.PRESET
+            assert len(device.selected_log) == 1
+            assert device.selected_log[0][0].kind == banks.Kind.PRESET
 
-    async def test_enter_on_a_midimap_sends_nothing(self, app):
+    async def test_enter_on_a_midimap_sends_nothing(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app._fill("M-RAM")
@@ -103,11 +125,12 @@ class TestOnlyPresetsAreSelected:
             await pilot.press("enter")
             for _ in range(8):
                 await pilot.pause()
-            assert app.device.selected_log == []
+            assert device.selected_log == []
 
-    async def test_two_selections_in_a_row_send_one(self):
+    async def test_two_selections_in_a_row_send_one(self) -> None:
         """The busy guard is set where it is checked, on the main thread."""
-        app = EmorphedApp(DemoDevice(latency=0.5), catalog=cat.empty())
+        demo = DemoDevice(latency=0.5)
+        app = EmorphedApp(demo, catalog=cat.empty())
         async with app.run_test() as pilot:
             await pilot.pause()
             app.query_one("#slot-table").focus()
@@ -116,11 +139,13 @@ class TestOnlyPresetsAreSelected:
             app.action_select()
             for _ in range(60):
                 await pilot.pause()
-            assert len(app.device.selected_log) == 1
+            assert len(demo.selected_log) == 1
 
 
 class TestReadingNames:
-    async def test_one_request_fills_every_region_of_that_kind(self, app):
+    async def test_one_request_fills_every_region_of_that_kind(
+        self, app: EmorphedApp
+    ) -> None:
         """The reply is one flat list across RAM, ROM and card; splitting
         it back into regions is the only place that mapping exists."""
         async with app.run_test() as pilot:
@@ -131,7 +156,9 @@ class TestReadingNames:
             assert app.catalog.live_name("P-RAM", 0) is not None
             assert app.catalog.live_name("P-ROM", 0) is not None
 
-    async def test_a_missing_card_leaves_its_region_empty(self, app):
+    async def test_a_missing_card_leaves_its_region_empty(
+        self, app: EmorphedApp
+    ) -> None:
         """The demo has no card, so the reply is short -- which is what a
         missing card looks like, not a fault."""
         async with app.run_test() as pilot:
@@ -143,7 +170,7 @@ class TestReadingNames:
 
 
 class TestFavouritesActOnTheRowNotThePane:
-    async def test_f_uses_the_rows_own_region(self, tmp_path):
+    async def test_f_uses_the_rows_own_region(self, tmp_path: Path) -> None:
         store = fav.Favorites(str(tmp_path / "f.db"))
         store.add("P-ROM", 5, name="Invented", rating=3)
         app = EmorphedApp(DemoDevice(), catalog=cat.empty(), favorites=store)
@@ -167,7 +194,9 @@ class TestFavouritesActOnTheRowNotThePane:
 class TestTheDeviceIdIsNotTheChannel:
     """This instrument has both, set in different places on it."""
 
-    async def test_the_picker_rejects_an_out_of_range_id(self, app):
+    async def test_the_picker_rejects_an_out_of_range_id(
+        self, app: EmorphedApp
+    ) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             before = app.device.device_id
@@ -180,7 +209,7 @@ class TestTheDeviceIdIsNotTheChannel:
 
 
 class TestStructuralRules:
-    def _workers(self):
+    def _workers(self) -> Iterator[ast.FunctionDef]:
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "emorphed",
@@ -201,10 +230,10 @@ class TestStructuralRules:
             ):
                 yield node
 
-    def test_there_are_workers_to_check(self):
+    def test_there_are_workers_to_check(self) -> None:
         assert list(self._workers())
 
-    def test_no_worker_touches_the_store_or_the_catalog(self):
+    def test_no_worker_touches_the_store_or_the_catalog(self) -> None:
         """SQLite refuses cross-thread use, and a worker that asks for
         `len(self.favorites)` raises out of the worker, ending the app."""
         offenders = []
@@ -222,7 +251,7 @@ class TestStructuralRules:
             f"self.catalog; workers do MIDI and hand off"
         )
 
-    def test_no_worker_sets_the_busy_flag_itself(self):
+    def test_no_worker_sets_the_busy_flag_itself(self) -> None:
         offenders = []
         for node in self._workers():
             for inner in ast.walk(node):
