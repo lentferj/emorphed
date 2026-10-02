@@ -1,0 +1,22 @@
+# No-AI quality gate, run on every commit.
+#
+# shellcheck and shfmt are intentionally absent: this repository contains no
+# shell scripts (*.sh or bash/sh shebangs). Add their hooks here if that
+# changes. See README "Development checks".
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.4.0
+    hooks:
+      - id: mypy
+        additional_dependencies: ["textual>=0.40"]
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
