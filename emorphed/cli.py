@@ -24,6 +24,12 @@ from collections.abc import Callable, Sequence
 from emu import banks, config, dumps
 from emu import catalog as cat
 from emu.device import Device
+from vinsynlib.cli import (
+    add_common_arguments,
+    channel_of,
+    make_parser,
+    validate_common,
+)
 
 __all__ = ["build_parser", "main"]
 
@@ -163,23 +169,21 @@ OFFLINE = {"regions", "list", "read"}
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="morphcli",
-        description="Browse an E-mu Morpheus. Read-only except `select`.",
+    parser = make_parser(
+        "morphcli",
+        "Browse an E-mu Morpheus. Read-only except `select`.",
     )
-    parser.add_argument("--port")
-    parser.add_argument("--recv-port")
-    parser.add_argument(
-        "--device-id",
-        type=int,
-        default=None,
-        help="SysEx device ID 0-15 (not the MIDI channel)",
+    add_common_arguments(
+        parser,
+        port=True,
+        recv_port=True,
+        channel=True,
+        device_id=True,
+        catalog=True,
+        config=True,
+        demo=True,
+        yes=True,
     )
-    parser.add_argument("--channel", type=int)
-    parser.add_argument("--catalog")
-    parser.add_argument("--config")
-    parser.add_argument("--demo", action="store_true")
-    parser.add_argument("--yes", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("regions", help="the memory map")
@@ -220,20 +224,22 @@ COMMANDS: dict[str, Callable[..., int | None]] = {
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config_path = getattr(args, "config", None) or config.DEFAULT_PATH
-    if args.channel is not None and not 1 <= args.channel <= 16:
-        raise SystemExit("error: --channel is 1-16")
-    channel = (
-        (args.channel - 1)
-        if args.channel is not None
-        else (config.load_channel(config_path) or 0)
-    )
+    validate_common(args)
+    # channel_of subtracts one: --channel is 1-16 on every command line in
+    # this family and 0-15 on the wire. The trailing `or 0` covers only the
+    # case where neither the option nor the cache had one; it cannot turn a
+    # real channel 0 into anything else.
+    channel = channel_of(args, default=config.load_channel(config_path)) or 0
     device_id = (
         args.device_id
         if args.device_id is not None
         else (config.load_device_id(config_path) or 0)
     )
+    # The family's check is against a byte, because that is what a SysEx
+    # device ID is in most of these protocols. A Morpheus only answers to
+    # the low sixteen of them.
     if not 0 <= device_id <= 15:
-        raise SystemExit("error: --device-id is 0-15")
+        raise SystemExit("error: --device-id is 0-15 on a Morpheus")
 
     device: Device | None = None
     if args.command not in OFFLINE:

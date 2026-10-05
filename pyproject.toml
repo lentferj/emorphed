@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A terminal browser for the E-mu Morpheus"
 requires-python = ">=3.11"
 license = { text = "GPL-2.0-or-later" }
-dependencies = ["textual>=0.40", "python-rtmidi>=1.4"]
+dependencies = ["textual>=0.40", "python-rtmidi>=1.4", "vinsynlib"]
 
 [project.scripts]
 emorphed = "emorphed.app:main"
@@ -16,6 +16,14 @@ morphcli = "emorphed.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["emu*", "emorphed*"]
+
+# vinsynlib is not on PyPI. It is the shared base of this family of
+# terminal instrument browsers and lives in a sibling checkout, so it is
+# installed from the working tree rather than from an index. Editable,
+# because a change to the library is a change here and should not need
+# a reinstall to see.
+[tool.uv.sources]
+vinsynlib = { path = "../vinsynlib", editable = true }
 
 [dependency-groups]
 dev = [
@@ -52,6 +60,13 @@ select = ["E", "F", "I", "B", "S", "SIM", "UP", "C4", "PL", "RUF", "C901"]
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
+[tool.ruff.lint.isort]
+# vinsynlib is a sibling checkout, not a published package, so ruff cannot
+# tell that it is ours rather than third-party. Saying so keeps the import
+# block in one piece instead of splitting the family's code away from this
+# project's.
+known-first-party = ["emu", "emorphed", "vinsynlib"]
+
 # Rules ruff cannot auto-fix, suppressed per file. `S101` (assert) is allowed
 # in tests by design. See README "Development checks".
 [tool.ruff.lint.per-file-ignores]
@@ -77,12 +92,17 @@ strict = true
 
 # Third-party modules without type stubs.
 [[tool.mypy.overrides]]
-module = ["rtmidi", "nano"]
+module = ["rtmidi"]
 ignore_missing_imports = true
 
 [tool.vulture]
 min_confidence = 80
 ignore_names = ["inspect"]
 
-[tool.deptry.per_rule_ignores]
-DEP001 = ["nano"]
+# No per-rule ignores are needed here. DEP001 used to excuse
+# `from nano import config` -- nanosyned's package, a copy-paste slip that
+# raised ImportError the moment --config was used. The code imports `emu`
+# now, and tests/test_config_paths.py is what keeps it that way.
+#
+# vinsynlib needs no DEP002 either: it is installed editable in the venv,
+# so deptry's metadata lookup finds it rather than failing on it.

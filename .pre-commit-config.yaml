@@ -10,11 +10,22 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.4.0
+  # A local hook, not mirrors-mypy. That one runs mypy in an isolated
+  # virtualenv built from `additional_dependencies`, and vinsynlib cannot be
+  # named there: it is a sibling checkout, not a package on an index. In an
+  # environment without it every `from vinsynlib...` resolved to Any, which
+  # turned the strict checks this project holds itself to into errors about
+  # the imports rather than about the code. Running the project's own .venv
+  # is both correct and the same interpreter the rest of the gate uses.
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: ["textual>=0.40", "pytest>=9.1.1"]
+        name: mypy
+        entry: .venv/bin/mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        args: [emorphed, emu, tests]
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
     hooks:
