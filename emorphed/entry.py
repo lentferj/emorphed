@@ -43,7 +43,7 @@ SOURCE = "vinsynlib @ git+https://github.com/lentferj/vinsynlib"
 def _diagnose(command: str) -> str | None:
     """``None`` if the shared library is usable, else what to tell the user."""
     try:
-        import vinsynlib
+        import vinsynlib  # noqa: PLC0415
     except ModuleNotFoundError as exc:
         if exc.name and not exc.name.startswith("vinsynlib"):
             raise
@@ -105,7 +105,7 @@ def _run(command: str, target: str) -> int:
         sys.stderr.write(problem)
         return 1
 
-    from importlib import import_module
+    from importlib import import_module  # noqa: PLC0415
 
     module, _, attribute = target.partition(":")
     entry = getattr(import_module(module), attribute)

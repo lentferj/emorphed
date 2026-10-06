@@ -64,7 +64,7 @@ def test_an_installed_library_is_reported_healthy() -> None:
 def test_an_older_library_is_named_rather_than_ignored(
     monkeypatch: Any,
 ) -> None:
-    import vinsynlib
+    import vinsynlib  # noqa: PLC0415
 
     monkeypatch.setattr(vinsynlib, "__version__", "0.0.9")
     problem = entry._diagnose("emorphed")
