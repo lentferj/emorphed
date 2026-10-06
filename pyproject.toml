@@ -11,8 +11,8 @@ license = { text = "GPL-2.0-or-later" }
 dependencies = ["textual>=0.40", "python-rtmidi>=1.4", "vinsynlib"]
 
 [project.scripts]
-emorphed = "emorphed.app:main"
-morphcli = "emorphed.cli:main"
+emorphed = "emorphed.entry:app"
+morphcli = "emorphed.entry:cli"
 
 [tool.setuptools.packages.find]
 include = ["emu*", "emorphed*"]
