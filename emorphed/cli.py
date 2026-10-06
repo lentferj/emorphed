@@ -172,6 +172,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = make_parser(
         "morphcli",
         "Browse an E-mu Morpheus. Read-only except `select`.",
+        distribution="emorphed",
     )
     add_common_arguments(
         parser,
