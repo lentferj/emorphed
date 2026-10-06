@@ -176,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_arguments(
         parser,
         port=True,
+        scan=True,
         recv_port=True,
         channel=True,
         device_id=True,
@@ -262,10 +263,17 @@ def main(argv: list[str] | None = None) -> int:
                         channel=channel,
                     )
                 else:
-                    bridge = b.MorpheusBridge.autodetect(
+                    # One Version Request to the remembered port; the sweep
+                    # only when there is nothing remembered, when the
+                    # remembered port no longer answers, or on --scan.
+                    bridge = b.MorpheusBridge.connect(
+                        config_path=config_path,
+                        channel=channel,
+                        device_id=device_id,
+                        scan=args.scan,
                         on_try=lambda n: print(
                             f"  probing {n}...", file=sys.stderr
-                        )
+                        ),
                     )
                 device = bridge
                 try:

@@ -45,7 +45,9 @@ from collections.abc import Callable
 from typing import Any
 
 from emu import banks
+from emu import config as cfg
 from emu import messages as m
+from vinsynlib import midi
 
 __all__ = [
     "BANK_TIMEOUT",
@@ -59,8 +61,14 @@ __all__ = [
 ]
 
 
-class DeviceError(RuntimeError):
-    """Something about the connection, not about the music."""
+class DeviceError(midi.DeviceError):
+    """Something about the connection, not about the music.
+
+    The library's class, so a probe that finds nothing is recognised by
+    :func:`vinsynlib.midi.open_remembered_or_swept` and the sweep it falls
+    back to happens -- with an announcement, rather than as a launch that
+    quietly takes the slow path.
+    """
 
 
 DEFAULT_TIMEOUT = 2.0
@@ -303,6 +311,95 @@ class MorpheusBridge:
             self._out.send_message(list(message))
 
     # --- discovery ----------------------------------------------------------
+
+    @classmethod
+    def connect(
+        cls,
+        *,
+        config_path: str = cfg.DEFAULT_PATH,
+        remembered: tuple[str, str] | None = None,
+        scan: bool = False,
+        channel: int = 0,
+        device_id: int = 0,
+        on_try: Callable[[str], None] | None = None,
+    ) -> MorpheusBridge:
+        """Open the unit, sweeping every port only when that is necessary.
+
+        **The normal path is one Version Request, to the port remembered in
+        ``config_path``.** That is not only an optimisation.
+        :meth:`autodetect` sweeps every output port on the machine at every
+        one of the sixteen SysEx device IDs, which on a studio box with
+        thirty ports takes seconds and pings every piece of hardware on the
+        chain -- and once the answer is known there is nothing left to learn
+        from asking again.
+
+        So: use the remembered port if there is one, sweep if there is not,
+        and sweep on request. ``scan=True`` is what ``--scan`` reaches,
+        which is what is needed after the unit moves to another port --
+        USB re-enumeration renumbers ALSA clients out from under a saved
+        name.
+
+        A remembered port that does not answer falls back to the sweep, but
+        **it says so first**. The guess is gone, and the announcement is
+        what keeps the fallback from looking like the fast path having
+        worked -- which is how a slow launch quietly becomes the normal one.
+        What the sweep then finds is written back, so the launch after this
+        one is fast again.
+
+        The policy itself is :func:`vinsynlib.midi.open_remembered_or_swept`,
+        written and tested once for the whole family; this is the Morpheus's
+        half of it, which is what a Version Request on a named port means
+        and where the answer is filed.
+
+        ``remembered`` defaults to what ``config_path`` holds. It is a
+        parameter so a caller can pass a pair it has already read, and so a
+        test can say what the file says without writing one.
+        """
+        remembered = (
+            remembered
+            if remembered is not None
+            else cfg.load_port_pair(config_path)
+        )
+
+        def probe(send: str, recv: str) -> MorpheusBridge:
+            """One round trip to the named port. Raises if nothing answers."""
+            try:
+                bridge = cls.open(
+                    send,
+                    recv_port=recv,
+                    device_id=device_id,
+                    channel=channel,
+                    timeout=PROBE_TIMEOUT,
+                )
+            except Exception as exc:
+                raise DeviceError(str(exc)) from exc
+            try:
+                bridge.version(timeout=PROBE_TIMEOUT)
+            except Exception as exc:
+                bridge.close()
+                raise DeviceError(
+                    f"no Version Request came back on {send!r}: {exc}"
+                ) from exc
+            # The discovery timeout must not become the session's: every
+            # later request that does not name its own would run at the
+            # probe's value rather than the working one.
+            bridge.timeout = DEFAULT_TIMEOUT
+            return bridge
+
+        def remember(bridge: MorpheusBridge) -> None:
+            if bridge.port and bridge.recv_port:
+                cfg.save_ports(bridge.port, bridge.recv_port, config_path)
+
+        return midi.open_remembered_or_swept(
+            probe=probe,
+            sweep=lambda try_hook: cls.autodetect(
+                timeout=PROBE_TIMEOUT, on_try=try_hook
+            ),
+            remembered=remembered,
+            scan=scan,
+            remember=remember,
+            on_try=on_try,
+        )
 
     @classmethod
     def autodetect(
