@@ -13,12 +13,58 @@ real messages: header, commands, sizes, fourteen-bit words, names and
 checksum all agree. Library, bridge and CLI written. 30 tests, all
 synthetic.
 
-**Nothing has been sent to a Morpheus** -- it is online but not patched
-into the MIDI bay.
+**The bench first talked to a Morpheus on 2026-10-15**: version,
+configuration, a preset read and a bank request all answered; the three
+name-list exchanges did not. See "Bench run, 2026-10-15" below.
+
+## Bench run, 2026-10-15 — first contact
+
+A human ran `make test-hardware` on a powered-on Morpheus. Raw output kept
+outside the checkout at `~/temp/hardware_run_vsl042.txt`. **5 passed, 3
+failed**; nothing was written, nothing was selected, nothing played.
+
+**Answered (read-only, structural):**
+
+* **Identity** — `Version Request F0 18 0C 07 12 F7` → reply, device ID
+  **7**, body `02 31 30 33` (firmware read as 2.103).
+* **Configuration** — 19 bytes returned:
+  `00 03 07 72 01 7F 00 00 00 02 46 01 20 00 18 00 08 00`. What is fitted
+  is not decodable from this output alone; recorded for the human.
+* **One RAM preset read** — 566-byte frame, body 556 bytes, checksum `0x3c`
+  recomputed as `0x3c`: **match**; 278 words re-decode. The preset read
+  path is confirmed on the wire.
+* **Bank request** — the unit *does* answer a whole-bank request: 44
+  messages in the 40 s window, the last two clean 566-byte preset frames
+  whose checksums match. **But 42 of the 44 are 674 bytes with the object
+  number stepping 0, 3, 6, … and a last byte that does not match a
+  recomputed checksum.** The leading hypothesis is that one rtmidi message
+  carried several concatenated SysEx frames and `m.parse()` reads only the
+  first — the 674-byte length, the ×3 stride and the "checksum" landing on
+  the last byte of a blob all fit it — but the cause is **not** concluded
+  until one raw capture says so.
+* **Timing** — two preset requests `PRESET_GAP` (100 ms) apart were both
+  answered; observed spacing **100.1 ms**, total 298.2 ms. First
+  measurement in the read direction (item 3).
+
+**Did not answer — the finding that matters:**
+
+* **All three name-list requests timed out** (2.0 s each): `0x12`
+  (preset), `0x50` (hyperpreset), `0x52` (midimap) got no
+  `0x13`/`0x51`/`0x53` reply. The one-message-gets-every-name read is the
+  capability this browser, its `r`/`S` keys and the scan offer are built
+  on, and on this unit/firmware it did not arrive.
+
+**Consequence:** the three hardware tests that assert a list reply are
+**failing on purpose** — they encode the manual's claim, and the run says
+the claim needs work before they can pass. They were not weakened. The next
+step is a raw capture of one `0x12` exchange (all bytes, no command filter)
+to separate "the unit does not answer `0x12`" from "the reply arrives in a
+shape `m.parse`/`request` drops" — the 674-byte bank-request messages above
+make the second live.
 
 ## 1. The bridge has never talked to the instrument
 
-**Status:** open, and the first thing to do at the bench.
+**Status:** open, and now narrowed by the 2026-10-15 bench run above.
 
 `emu/bridge.py` is complete and unexercised. In order:
 
@@ -31,14 +77,25 @@ into the MIDI bay.
 Then `autodetect`, whose sweep over sixteen device IDs times every port
 has never been run and may well be too slow to be pleasant.
 
-**Blocked on:** the Morpheus being patched in.
+**Not blocked any more.** The bench talked to the unit on 2026-10-15:
+Version Request, configuration, one preset read and a bank request all
+answered. What the probes above leave open:
+
+* `names()` for all three kinds got **no reply** (0x12/0x50/0x52 timed
+  out) — so "if this works the browser is essentially done" is now a
+  question, not an expectation.
+* the bank request arrived as 674-byte messages the parser does not
+  frame-split (number stride 3, no matching checksum); whether a 72 kB
+  reply arrives in one message or several is still unanswered.
+
+`autodetect`, whose sweep over sixteen device IDs times every port, has
+still never been run and may well be too slow to be pleasant.
 
 The bench is built (T9, `581c4ed`: `tests/test_hardware.py`,
-`tests/conftest.py`, `make test-hardware`) and awaits a human run; no agent
-drives the unit. Its steps would answer this item's listed probes: a Version
-Request round-trip, `names()` for all three kinds, and `read_preset`
-checksum recomputation.<|end|><|start|><|start|>assistant to=edit<|channel|>analysis <|constrain|>xml<|message|><rfl:parameter name="path">
-/home/lentferj/git-repos/emorphed/TODO.md
+`tests/conftest.py`, `make test-hardware`); a human ran it 2026-10-15
+(see the bench section above). Its steps cover this item's probes: Version
+round-trip **answered**, `names()` for all three kinds **did not**, and
+`read_preset` checksum recomputation **matched** (566-byte frame, 0x3c).
 
 ## 2. Two things in the manual disagree about the card
 
@@ -50,15 +107,15 @@ real dump holding 0-383. `banks.py` uses 384.
 What would settle it beyond doubt: a Configuration Request on a unit with
 and without a card fitted.
 
-**Blocked on:** item 1, and a card.
-
-The bench is built (T9) and awaits a human run; its configuration request
-prints the RAM sizes and card presence and settles the 256–319 vs 384
-question observationally. No code change is pending on this answer.
+**Blocked on:** a card. The bench ran 2026-10-15 and printed the 19
+configuration bytes (see the bench section above): enough for the record,
+not enough to decode what is fitted, so the 320-vs-384 question is
+unchanged by this run and the observation belongs to a card-fitted unit.
+No code change is pending on this answer.
 
 ## 3. `PRESET_GAP` is a guess
 
-**Status:** open, blocked on wanting to measure it.
+**Status:** open — first measurement taken 2026-10-15 (one observation).
 
 The manual warns that sending presets to the unit needs roughly 100 ms
 between them or the input buffer clogs, and offers a SysEx Packet Delay
@@ -66,9 +123,11 @@ setting for the reverse. This program only reads, so the number is used
 defensively when walking presets one at a time. It has not been measured
 in the read direction.
 
-The bench is built (T9) and awaits a human run; its spacing probe sends two
-preset requests `PRESET_GAP` apart and prints the measured gap tolerance.
-`PRESET_GAP` stays labelled a guess until that run.
+The bench ran 2026-10-15: two preset requests `PRESET_GAP` (100 ms) apart
+were **both answered**, observed spacing **100.1 ms**, total 298.2 ms.
+That is one observation on one unit, not a tolerance curve — the number
+stays labelled a guess in the code until a sweep says how far it can be
+pushed, but the read direction is no longer unmeasured.
 
 ## 4. Hyperpresets and midimaps are read but not browsed
 
@@ -179,6 +238,14 @@ Not guessed at. `Packet.body` now says in its docstring exactly what is
 stripped, what is not, and why -- and item 1 gains the bench step. The
 alternative was to strip uniformly on a hunch, which would silently eat a
 real data byte from every Version reply if the hunch were wrong.
+
+**The bench step ran 2026-10-15** and came back split: the *numbered*
+preset data frames recompute correctly (566-byte read, `0x3c` = `0x3c`),
+while the unnumbered-looking 674-byte bank messages end in a byte that does
+not match a recomputed checksum. That is evidence for the "no checksum on
+unnumbered replies" half and simultaneously leaves the merged-frame
+question open — one raw capture of a bank/list exchange settles it. Nothing
+is stripped differently until then.
 
 ## ER-3 — the largest modules had no tests — FIXED, and it found a bug
 
@@ -407,10 +474,11 @@ and see which one arrives.
 
 **Blocked on:** item 1, and a card.
 
-The bench (T9) is built and awaits a human run. It does not drive the
+The bench (T9) was built and **ran 2026-10-15**. It does not drive the
 select-based settle itself — selecting moves the unit — so that step stays
-a listed manual bench step rather than an automated test. The bench records
-the configuration-reported card regions for the human's note.
+a listed manual bench step, and the run printed the configuration bytes and
+the card-backed regions emorphed maps (P-CARD/H-CARD/M-CARD), nothing more.
+No card presence or card bank number was established by this run.
 
 ---
 
@@ -447,7 +515,11 @@ task shipped.
 - **T8 — kind views** (`eab7d11`): closes item 4 (see above).
 - **T9 — hardware suite** (`581c4ed`): `tests/conftest.py`,
   `tests/test_hardware.py`, `make test-hardware`. Collection succeeds
-  without a device; no agent runs it.
+  without a device; no agent ran it. A human ran it 2026-10-15 —
+  5 passed, 3 failed (the three name-list replies timed out); see the
+  bench section above.
+- **Bench follow-up (this commit)**: `TODO.md` and
+  `docs/RESOLUTION_NOTES.md` record the 2026-10-15 run; no code changed.
 - **T10 — extract tool** (`5af2160`): closes item 8 (see above).
 - **T11 — docs** (this commit): `CLAUDE.md`, `TODO.md`,
   `docs/RESOLUTION_NOTES.md`, `README.md`.

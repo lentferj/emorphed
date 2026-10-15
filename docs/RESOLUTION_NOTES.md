@@ -268,7 +268,7 @@ runs without hardware).
 Sources: p2ked (`p2k/backup.py`, 250 lines), rxved (`rxved/cli.py:39-41`,
 `:1186-1221`).
 
-## 16. Hardware suite (T9) — the bench is built, not run
+## 16. Hardware suite (T9) — the bench is built, and was run 2026-10-15
 
 **Task T9** (`581c4ed`): `tests/conftest.py` adds `pytest_addoption("--hardware")`
 and the env twin `EMORPHED_HARDWARE=1`, plus a session-scoped `bridge`
@@ -331,3 +331,58 @@ scan (`S`, `ScanOfferScreen`), new CLI commands (`fav`, `tags`, `ports`,
 truthful: no write path and no `restore`. CLI surface spell-checked against
 `morphcli --help` and `emorphed --help` (console scripts per `pyproject.toml`:
 `emorphed`, `morphcli`).
+
+## 19. The bench run, and what it found (2026-10-15)
+
+**Source: this run, not a document.** A human ran `make test-hardware` on a
+powered-on Morpheus (`tests/test_hardware.py` via `tests/conftest.py`'s
+`--hardware` gate). The raw output is kept outside the checkout at
+`~/temp/hardware_run_vsl042.txt`. Result: **5 passed, 3 failed**. The suite
+is read-only by construction: no Bank Select, no Program Change, no write
+of any kind; what it sent was Version, Configuration, Preset, Hyperpreset,
+Midimap, Preset-Bank and Preset List requests only.
+
+**Answered:**
+
+* Version: request `F0 18 0C 07 12 F7` → reply with device ID 7 and body
+  `02 31 30 33` (firmware read as 2.103). The bridge's request/reply
+  matching works against a real unit.
+* A RAM preset read returned the expected **566-byte frame** (body 556),
+  and the recomputed checksum `0x3c` equals the byte on the wire — the
+  first confirmation of §3's measurement against hardware rather than
+  against dumps.
+* A preset **bank request is answered** (44 messages within the 40 s
+  window); the last two are clean 566-byte preset frames whose checksums
+  match. So "does a whole-bank request answer at all" is now yes.
+* `PRESET_GAP` timing: two preset requests 100 ms apart were both answered;
+  observed spacing **100.1 ms**, total 298.2 ms. One observation, one unit
+  (TODO item 3) — the constant stays labelled a guess in the code, but the
+  read direction now has a data point.
+* Configuration returned 19 bytes
+  (`00 03 07 72 01 7F 00 00 00 02 46 01 20 00 18 00 08 00`); recorded as
+  printed, not decoded. It does not by itself settle TODO item 2 (320 vs
+  384) — that needs a card-fitted unit and a decoded response.
+
+**Not answered, and the reason this section exists:**
+
+* **All three name-list requests timed out** at 2.0 s: `0x12` → no
+  `0x13`, `0x50` → no `0x51`, `0x52` → no `0x53`. §7's "one message gets
+  every name" — the mechanism `r`, `S`, the scan offer and the README's
+  central claim rest on — did not produce a reply on this unit in this run.
+* The bank request's 42 non-final messages were **674 bytes with the object
+  number stepping 0, 3, 6, … and a recomputed checksum that does not
+  match** the last byte. A merged-frames-per-rtmidi-message explanation
+  (one message carrying several concatenated SysEx frames, of which
+  `m.parse()` reads only the first) fits all three symptoms; it is the
+  leading hypothesis and is **not** concluded here. Until a raw capture of
+  one exchange says otherwise, neither the parser nor the request framing
+  should change.
+
+**What this changes in the code: nothing.** The three hardware tests that
+assert a list reply fail deliberately — they encode the manual's claim and
+the claim is now the open question. They are left failing (with named
+reasons in the report) rather than weakened, and `make check` is unaffected
+because the hardware file is opted in. The next step is a raw `0x12`
+exchange captured without a command filter, to separate "the unit does not
+answer `0x12`" from "the reply is dropped in framing" — the 674-byte bank
+messages make the second plausible.
