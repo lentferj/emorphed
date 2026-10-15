@@ -1042,7 +1042,15 @@ class EmorphedApp(App[None]):
         from emu import config as _cfg
 
         try:
-            if _cfg.load_ui_bool("scan_offer_dismissed", default=False):
+            if self._config_path is not None:
+                dismissed = _cfg.load_ui_bool(
+                    "scan_offer_dismissed", self._config_path, default=False
+                )
+            else:
+                dismissed = _cfg.load_ui_bool(
+                    "scan_offer_dismissed", default=False
+                )
+            if dismissed:
                 return
         except Exception:  # noqa: S110
             pass

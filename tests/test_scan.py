@@ -146,7 +146,7 @@ class TestFlow:
         monkeypatch.setattr("emu.config.save_ui_state", fake_save)
         monkeypatch.setattr(
             "emu.config.load_ui_bool",
-            lambda key, **kwargs: False,
+            lambda key, path=None, **kwargs: False,
         )
         app = make(tmp_path, catalog=cat.empty(), offer_scan=True)
         async with app.run_test() as pilot:
@@ -159,13 +159,37 @@ class TestFlow:
     ) -> None:
         monkeypatch.setattr(
             "emu.config.load_ui_bool",
-            lambda key, **kwargs: True,
+            lambda key, path=None, **kwargs: True,
         )
         app = make(tmp_path, catalog=cat.empty(), offer_scan=True)
         async with app.run_test() as pilot:
             await asyncio.sleep(0.8)
             await pilot.pause()
             assert not isinstance(app.screen, ScanOfferScreen)
+
+    async def test_never_again_reads_the_file_it_wrote(
+        self, tmp_path: Path
+    ) -> None:
+        """A dismissal answered to ``--config`` must survive the restart.
+
+        The answer is written to ``self._config_path``; the offer reader
+        must look at that same file, or the next launch reads the
+        default ui-state and asks again.
+        """
+        app = make(tmp_path, catalog=cat.empty(), offer_scan=True)
+        async with app.run_test() as pilot:
+            assert await _wait(app, pilot, ScanOfferScreen)
+            await pilot.press("d")
+            await pilot.pause()
+        saved = (tmp_path / "config.toml").read_text()
+        assert "scan_offer_dismissed" in saved
+
+        fresh = make(tmp_path, catalog=cat.empty(), offer_scan=True)
+        async with fresh.run_test() as pilot:
+            await pilot.pause()
+            fresh._maybe_offer_scan()
+            await pilot.pause()
+            assert not isinstance(fresh.screen, ScanOfferScreen)
 
     async def test_demo_refuses(self, tmp_path: Path) -> None:
         app = make(tmp_path, device=DemoDevice(), demo=True, offer_scan=True)
