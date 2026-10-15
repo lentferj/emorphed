@@ -26,7 +26,6 @@ from emu import backup as bk
 from emu import banks, config, dumps
 from emu import catalog as cat
 from emu import favorites as favmod
-from emu import messages as m
 from emu.device import Device
 from vinsynlib import render
 from vinsynlib.cli import (
@@ -247,7 +246,7 @@ def _cmd_fav(_device: Device | None, args: argparse.Namespace) -> None:  # noqa:
             else:
                 print(
                     f"{bank_id} {number:03d} was not a favourite",
-                    file=__import__("sys").stderr,
+                    file=sys.stderr,
                 )
             return
         if getattr(args, "tag", None):
@@ -258,7 +257,7 @@ def _cmd_fav(_device: Device | None, args: argparse.Namespace) -> None:  # noqa:
             rows = favorites.all(order=args.order)
         rows = _rated(args, rows)
         if not rows:
-            print("no favourites", file=__import__("sys").stderr)
+            print("no favourites", file=sys.stderr)
             return
         table = []
         for fav in rows:
@@ -314,7 +313,7 @@ def _cmd_tags(_device: Device | None, args: argparse.Namespace) -> None:
     finally:
         favorites.close()
     if not counts:
-        print("no tags", file=__import__("sys").stderr)
+        print("no tags", file=sys.stderr)
         return
     print(
         _table([[tag, str(n)] for tag, n in counts.items()], ["tag", "count"])
@@ -410,7 +409,7 @@ def _cmd_backup_save(device: Device, args: argparse.Namespace) -> None:
     directory = _backup_dir(args)
     total = entry.count
     done = 0
-    print(f"reading {entry.label} ({total})...", file=__import__("sys").stderr)
+    print(f"reading {entry.label} ({total})...", file=sys.stderr)
     device_any = cast(Any, device)
     for slot in banks.slots(entry.id):
         if done > 0:
@@ -420,7 +419,6 @@ def _cmd_backup_save(device: Device, args: argparse.Namespace) -> None:
             words,
             device_id=device.device_id,
             slot=slot.index,
-            name=m_decode_name(words),
             source="emorphed (backup save)",
             directory=args.dir,
         )
@@ -428,18 +426,11 @@ def _cmd_backup_save(device: Device, args: argparse.Namespace) -> None:
         print(
             render.progress("preset", done, total),
             end="",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
             flush=True,
         )
-    print("", file=__import__("sys").stderr)
+    print("", file=sys.stderr)
     print(f"saved {done} preset(s) to {directory}")
-
-
-def m_decode_name(words: Any) -> str:
-    try:
-        return m.decode_name(list(words)[: m.NAME_CHARS]).rstrip()
-    except Exception:
-        return ""
 
 
 def _cmd_backup(_device: Device | None, args: argparse.Namespace) -> None:
