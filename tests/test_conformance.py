@@ -50,7 +50,9 @@ def test_keys_match_the_family() -> None:
 def test_the_legend_matches_the_family() -> None:
     # select=True here even though the binding check above says False: the
     # legend is a promise about which keys work, and this one does.
-    assert not conformance.check_legend(KEY_HINTS, extras=("d device ID",))
+    assert not conformance.check_legend(
+        KEY_HINTS, extras=("d device ID", "k kind")
+    )
 
 
 def test_the_vocabulary_is_declared() -> None:

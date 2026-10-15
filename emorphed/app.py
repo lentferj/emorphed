@@ -215,6 +215,7 @@ class EmorphedApp(App[None]):
         Binding("question_mark", "help", "Help"),
         Binding("tab", "switch_pane", "Switch pane"),
         Binding("q", "quit", "Quit"),
+        Binding("k", "cycle_kind", "Kind view"),
     ]
 
     def __init__(  # noqa: PLR0913
@@ -254,6 +255,11 @@ class EmorphedApp(App[None]):
         #: Raised by the scan modal's Cancel and checked between kinds.
         self._scan_cancel = threading.Event()
         self.view_mode = VIEW_ALL
+        #: Which kind's view the right pane is currently showing. Cycles
+        #: preset -> hyperpreset -> midimap on `k`. A pure read: it sends
+        #: nothing to the unit.
+        self.kind_view = banks.Kind.PRESET
+        self._kind_view = self.kind_view
         self._bank_ids: list[str] = banks.region_ids()
         self._current_bank = self._bank_ids[0]
         self._current: list[banks.Slot] = []
@@ -656,7 +662,9 @@ class EmorphedApp(App[None]):
         # looking at and left the one they were. _fill has always read the
         # row's own bank; these did not.
         bank_id = entry.bank_id
-        name = self.catalog.display_name(bank_id, entry.number)
+        name = self.catalog.display_name(
+            bank_id, entry.number, kind=entry.kind
+        )
         # Favorites.toggle, not remove-then-add: un-favouriting keeps
         # the row so a rating, tags, a note and the original date
         # survive being toggled off and on. As a delete followed by a
@@ -785,10 +793,16 @@ class EmorphedApp(App[None]):
         try:
             table.clear()
             for entry in self._current:
-                name = self.catalog.display_name(entry.bank_id, entry.number)
-                if self.catalog.differs(entry.bank_id, entry.number):
+                name = self.catalog.display_name(
+                    entry.bank_id, entry.number, kind=entry.kind
+                )
+                if self.catalog.differs(
+                    entry.bank_id, entry.number, kind=entry.kind
+                ):
                     shown = f"[b]{name}[/b] [dim]*[/dim]"
-                elif self.catalog.is_live(entry.bank_id, entry.number):
+                elif self.catalog.is_live(
+                    entry.bank_id, entry.number, kind=entry.kind
+                ):
                     shown = f"[b]{name}[/b]"
                 else:
                     shown = name
@@ -813,10 +827,14 @@ class EmorphedApp(App[None]):
             self.query_one("#detail", Static).update("")
             return
         entry = self._current[row]
-        name = self.catalog.display_name(entry.bank_id, entry.number)
+        name = self.catalog.display_name(
+            entry.bank_id, entry.number, kind=entry.kind
+        )
         source = (
             "read from the unit"
-            if self.catalog.is_live(entry.bank_id, entry.number)
+            if self.catalog.is_live(
+                entry.bank_id, entry.number, kind=entry.kind
+            )
             else "from the catalog"
         )
         if entry.region.needs_card:
@@ -868,6 +886,30 @@ class EmorphedApp(App[None]):
         right = self.query_one("#slot-table", DataTable)
         (right if left.has_focus else left).focus()
 
+    def action_cycle_kind(self) -> None:
+        """Cycle the right pane's view: preset -> hyperpreset -> midimap.
+
+        A pure read-side switch: it sends nothing to the unit. It only
+        changes which kind's slots are being browsed (and which kind the
+        next `r` would read), so there is no sound and no MIDI.
+        """
+        kinds = list(banks.Kind.ALL)
+        current = getattr(self, "kind_view", banks.Kind.PRESET)
+        idx = kinds.index(current)
+        nxt = kinds[(idx + 1) % len(kinds)]
+        self.kind_view = nxt
+        self._kind_view = nxt
+        # Land on the first region of the newly selected kind.
+        ids = banks.region_ids(nxt)
+        if ids:
+            self._current_bank = ids[0]
+            self._fill(self._current_bank)
+        self.notify_status(f"{nxt} view")
+
+    # Aliases for any caller or test that names the action differently.
+    action_cycle_kind_view = action_cycle_kind
+    action_kind_view = action_cycle_kind
+    action_kind = action_cycle_kind
     # --- operations ---------------------------------------------------------
 
     def action_select(self) -> None:
@@ -969,7 +1011,10 @@ class EmorphedApp(App[None]):
                 if cursor >= len(names):
                     break
                 self.catalog.set_live_name(
-                    region.id, number, names[cursor].rstrip()
+                    region.id,
+                    number,
+                    names[cursor].rstrip(),
+                    kind=kind,
                 )
                 cursor += 1
                 adopted += 1
@@ -987,7 +1032,7 @@ class EmorphedApp(App[None]):
                     if cursor >= len(names):
                         break
                     name = names[cursor].rstrip()
-                    to_save[_livenames.key(region.id, number)] = name
+                    to_save[_livenames.key(region.id, number, kind)] = name
                     cursor += 1
                 if cursor >= len(names):
                     break

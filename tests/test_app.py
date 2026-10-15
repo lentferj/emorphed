@@ -154,8 +154,8 @@ class TestReadingNames:
             await pilot.press("r")
             for _ in range(30):
                 await pilot.pause()
-            assert app.catalog.live_name("P-RAM", 0) is not None
-            assert app.catalog.live_name("P-ROM", 0) is not None
+            assert app.catalog.live_name("P-RAM", 0, kind="preset") is not None
+            assert app.catalog.live_name("P-ROM", 0, kind="preset") is not None
 
     async def test_a_missing_card_leaves_its_region_empty(
         self, app: EmorphedApp
@@ -167,7 +167,7 @@ class TestReadingNames:
             await pilot.press("r")
             for _ in range(30):
                 await pilot.pause()
-            assert app.catalog.live_name("P-CARD", 0) is None
+            assert app.catalog.live_name("P-CARD", 0, kind="preset") is None
 
 
 class TestFavouritesActOnTheRowNotThePane:

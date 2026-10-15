@@ -97,11 +97,11 @@ def apply_to(catalog: Any, path: Any = None) -> int:
     applied = 0
     for stored, name in load(path).items():
         try:
-            bank_id, _kind, number = split_key(stored)
+            bank_id, kind, number = split_key(stored)
         except ValueError:
             continue
         if bank_id:
-            catalog.set_live_name(bank_id, number, name)
+            catalog.set_live_name(bank_id, number, name, kind=kind)
             applied += 1
     return applied
 

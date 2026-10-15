@@ -54,4 +54,4 @@ class ReportScreen(_Frame):
 
 
 #: The legend. Every binding the app has, in the order somebody meets them.
-KEY_HINTS = keys.legend(("d device ID",))
+KEY_HINTS = keys.legend(("d device ID", "k kind"))
