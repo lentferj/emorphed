@@ -33,6 +33,13 @@ has never been run and may well be too slow to be pleasant.
 
 **Blocked on:** the Morpheus being patched in.
 
+The bench is built (T9, `581c4ed`: `tests/test_hardware.py`,
+`tests/conftest.py`, `make test-hardware`) and awaits a human run; no agent
+drives the unit. Its steps would answer this item's listed probes: a Version
+Request round-trip, `names()` for all three kinds, and `read_preset`
+checksum recomputation.<|end|><|start|><|start|>assistant to=edit<|channel|>analysis <|constrain|>xml<|message|><rfl:parameter name="path">
+/home/lentferj/git-repos/emorphed/TODO.md
+
 ## 2. Two things in the manual disagree about the card
 
 **Status:** resolved in favour of the data; worth confirming.
@@ -45,6 +52,10 @@ and without a card fitted.
 
 **Blocked on:** item 1, and a card.
 
+The bench is built (T9) and awaits a human run; its configuration request
+prints the RAM sizes and card presence and settles the 256–319 vs 384
+question observationally. No code change is pending on this answer.
+
 ## 3. `PRESET_GAP` is a guess
 
 **Status:** open, blocked on wanting to measure it.
@@ -55,18 +66,28 @@ setting for the reverse. This program only reads, so the number is used
 defensively when walking presets one at a time. It has not been measured
 in the read direction.
 
+The bench is built (T9) and awaits a human run; its spacing probe sends two
+preset requests `PRESET_GAP` apart and prints the measured gap tolerance.
+`PRESET_GAP` stays labelled a guess until that run.
+
 ## 4. Hyperpresets and midimaps are read but not browsed
 
-**Status:** open.
+**Status:** closed in T8 (`eab7d11`).
 
-`morphcli names hyperpreset` and `names midimap` work, and dumps of both
-parse. The browser does not have a pane for them.
+The right pane now cycles across **preset → hyperpreset → midimap** on
+`k`. All three kinds are read in their own free name request (one exchange
+per kind, silent) and land in the right regions; names from the live read
+win over the catalog and persist through the same sidecar path. Display
+numbers follow `emu/banks.py` per kind; the card flag and writable flag are
+shown. `enter` selects presets only — hyperpresets and midimaps are refused
+with a plain sentence in `notify_status(..., refused=True)` styling, because
+no Program Change reaches a midimap at all. `tests/test_app.py` covers the
+cycle, the three reads landing in the right regions, the refusal sentence,
+and cursor silence.
 
-A hyperpreset stacks up to 16 zones of presets; a midimap assigns a
-preset to each of 16 channels and **cannot be selected with a program
-change at all** -- SysEx is the only way. That last fact is the strongest
-argument for giving them a pane, since the front panel is the only other
-route.
+What remains, if anything: none tracked here. Whether a midimap can ever
+be selected by SysEx (not a Program Change) is a separate, unstarted
+decision and stays out of the browser.
 
 ## 5. The browser — DONE 2026-09-20
 
@@ -322,6 +343,23 @@ That is the bench's question, not the review's.
 
 ## 8. `tools/extract_catalog.py` does not exist
 
+**Status:** closed in T10 (`5af2160`).
+
+The tool now exists. It builds `emu/data/catalog.json` (gitignored) from a
+user-supplied name listing: a Cakewalk `.ins` as the primary source, or a
+plain-text preset list (one name per line, prose heading per bank) via
+`--from-text`. Rows land via `catalog.make_key`; a gap is a gap (UNNAMED
+placeholder or omitted, never invented). Guards refuse duplicate display
+numbers, control characters and unprintables, and round-trip the parsed
+name.
+
+Run line:
+
+    python tools/extract_catalog.py --help
+
+Tests: `tests/test_extract.py`, on invented fixtures only — no network, no
+local file presence required.
+
 ## ER-F1 — the bool sweep stopped at `device_id`; `load_channel` has the same bug (external review follow-up — GLM-5.3-Flash, 2026-09-20)
 
 **Status:** open, verified live in six projects.
@@ -378,3 +416,53 @@ ignore. Nothing here can tell without a Morpheus and a card.
 and see which one arrives.
 
 **Blocked on:** item 1, and a card.
+
+The bench (T9) is built and awaits a human run. It does not drive the
+select-based settle itself — selecting moves the unit — so that step stays
+a listed manual bench step rather than an automated test. The bench records
+the configuration-reported card regions for the human's note.
+
+---
+
+## Adopted in this wave (T1–T11)
+
+vinsynlib 0.4.2 surface adoption. One entry per task; the features each
+task shipped.
+
+- **T1 — Stand on 0.4.2** (`dd33a6b`): `vinsynlib>=0.4.2`,
+  `entry.MINIMUM = (0, 4, 2)`, `SOURCE = "vinsynlib>=0.4.2"`. Entry gate
+  covered by `tests/test_entry.py`.
+- **T2 — screens and working rules** (`26d8ce0`): `emorphed/screens.py`
+  re-exports `ReportScreen` (frame, scrollable body) and `PromptScreen`;
+  `BusyGate`/`QUIET_BRIDGE_ERRORS` from `vinsynlib.ui.work`;
+  `_build_line()` via `build.build_of`.
+- **T3 — catalog on the library** (`c5af02d`): keys via `catalog.make_key`,
+  `UNNAMED = "--"`, printed-vs-live discipline intact;
+  `tests/test_catalog.py`.
+- **T4/T5 — live names** (`75bbbf9`): sidecar `live-names.json` beside the
+  favourites DB; loaded at startup before the first frame; persisted after a
+  successful read; `--live-names` override. `tests/test_livenames.py`.
+- **T5 — undo and rating filter** (`9738de7`): `UndoLog(gate_hook=...)` made
+  first in `__init__`; `z`/`Z` restore previous values; `V` rating filter via
+  `vinsynlib.ui.modals.RatingFilterScreen` (remembered as `rating_stars` /
+  `rating_at_least`).
+- **T6 — CLI and backup envelope** (`9101b7d`): `morphcli fav`, `tags`,
+  `ports`, `backup save|list` (read-only; no `restore` — TODO 6 design
+  decision). `emu/backup.py`, `tests/test_backup.py`,
+  `tests/test_cli_favorites.py`. `render` tables/progress, `spec.flag_help`.
+- **T7 — scan** (`423619e`): `emorphed/scan.py` (`ScanOfferScreen` y/n/d,
+  mount-safe `ScanScreen` progress + cancel), `_maybe_offer_scan`, `S`
+  reads all three kinds, progress on the shared `ScanScreen`, cancel checked
+  between kinds. Honest text: no per-bank play on the Morpheus.
+- **T8 — kind views** (`eab7d11`): closes item 4 (see above).
+- **T9 — hardware suite** (`581c4ed`): `tests/conftest.py`,
+  `tests/test_hardware.py`, `make test-hardware`. Collection succeeds
+  without a device; no agent runs it.
+- **T10 — extract tool** (`5af2160`): closes item 8 (see above).
+- **T11 — docs** (this commit): `CLAUDE.md`, `TODO.md`,
+  `docs/RESOLUTION_NOTES.md`, `README.md`.
+
+Deliberate divergences recorded in
+`docs/PROMPT-emorphed-parity.md` (parity contract): no category filter,
+no write path / `--allow-write`, no marked-list or screenshot capture,
+favourites stays on `F`.

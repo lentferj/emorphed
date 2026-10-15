@@ -157,8 +157,123 @@ python -m emorphed.cli read dump.syx    # read a .syx, verify checksums
 python -m emorphed.cli status           # ask the unit who it is
 ```
 
+Browser:
+
+```
+python -m emorphed                     # the unit remembered in config.toml
+python -m emorphed --demo              # built-in demo device (no MIDI ports)
+python -m emorphed --scan              # probe every port and update config.toml
+python -m emorphed --live-names PATH   # where names read from the unit are kept
+```
+
 `read` checks every dump's checksum, so it can tell you a file is
 *damaged* rather than only that it is the wrong length.
+
+## What the browser does
+
+Two panes: regions on the left, that region's slots on the right. Favourites,
+tags, notes, search, device info. Morpheus-specific:
+
+- **One message gets every name.** `r` reads all names of the current kind in
+  a single exchange — this instrument can do that and its siblings cannot.
+  Reading names is **silent**: it plays nothing. Names from the unit show
+  in bold; a `*` marks a slot where the unit and the catalog disagree.
+- **Three kinds in one browser.** `k` cycles the right pane across preset →
+  hyperpreset → midimap views. Names for all three kinds are read the same
+  silent way. `enter` selects presets only; hyperpresets and midimaps are
+  refused with a plain sentence (`no Program Change reaches a midimap at all`).
+- **Favourites**, with ratings, tags and notes, in SQLite under the per-platform
+  data directory. `f` favourites the slot under the cursor, `t`/`n` set tags
+  and note, `*` rates it 0–5. `F` cycles all slots → this bank's favourites →
+  every favourite; `V` narrows by rating (exactly, or that many and up; stacks
+  on top of the view).
+- **Undo.** `z` reverses the last favourites/rating/tags/notes change, `Z` all
+  of them, restoring previous values. The undo log is the favourites store's
+  log, not a separate buffer.
+- **Live names kept between sessions.** Names read off the unit go into
+  `live-names.json` beside the favourites database, so the browser opens on
+  your patches rather than the factory list. Override the path with
+  `--live-names`. `rxvcli`-style sharing is via the same file.
+- **Scan.** `S` learns names for all three kinds (silent, one exchange each
+  per kind) with progress on a shared `ScanScreen`; cancel is checked between
+  kinds. A scan offer appears when the catalog is empty. No sound accompanies
+  any of this on the Morpheus — there is no per-bank play.
+- **Device ID is its own thing.** `d` sets the SysEx device ID (0–15 on the
+  wire), `c`/`[`/`]` the MIDI channel. A wrong device ID is answered with
+  silence, which is indistinguishable from a wrong cable.
+
+Keys (full set): arrows move (never sends anything); tab switches pane; `⏎`
+select on the unit (presets only); `r` read names; `/` search; `[`/`]`/`c`
+channel; `d` device ID; `f` favourite; `F` favourites view; `t`/`n` tags/note;
+`*` rating; `V` rating filter; `z`/`Z` undo; `k` kind view; `S` scan; `i`
+device info; `?` help; `q` quit.
+
+Remembered between runs: the rating filter (`rating_stars`, `rating_at_least`)
+and the scan-offer dismissal (`scan_offer_dismissed`), via the config's
+ui-state wrappers.
+
+## Command line
+
+```
+morphcli ports
+morphcli banks
+morphcli list {P-RAM,P-ROM,P-CARD,H-RAM,H-CARD,M-RAM,M-CARD}
+morphcli names {preset,hyperpreset,midimap}
+morphcli status
+morphcli select {P-RAM,P-ROM,P-CARD} number
+morphcli read FILE {preset,hyperpreset,midimap}
+morphcli fav [--add REGION:N] [--remove REGION:N] [--rate REGION:N 0-5] [--tags TAGS] [--note NOTE] [--tag TAG] [--search SEARCH] [--rating-at-least 0-5 | --rating-exactly 0-5] [--order {added,rating,bank,name}]
+morphcli tags
+morphcli backup list [--dir DIR] [--json]
+morphcli backup save {P-RAM,P-ROM,P-CARD,H-RAM,H-CARD,M-RAM,M-CARD} [--dir DIR] --yes
+```
+
+Global options go before the subcommand: `morphcli --demo ...`. `ports`,
+`banks`, `list`, `fav`, `tags`, `backup list` construct no bridge and open
+no port.
+
+## Backups
+
+`morphcli backup save REGION` reads a whole RAM region (128 preset requests,
+paced by `PRESET_GAP`) into a backup envelope, behind `--yes` because it
+reads from the unit. `morphcli backup list` shows them newest-first; corrupt
+files are listed with `error`. There is deliberately **no `restore`
+command**: the Morpheus has no write path in emorphed, and TODO item 6
+keeps it that way. `load` exists in `emu/backup.py` for the day writes
+arrive; today only capture is offered.
+
+## The bench, real hardware
+
+`make test-hardware` drives a real E-mu Morpheus. It is **not** part of
+`make check`, and no agent runs it unless explicitly authorised. Build-only
+verification (no device traffic):
+
+```
+.venv/bin/pytest tests/test_hardware.py --hardware --collect-only -q
+```
+
+The suite asks read-only questions and prints observations for the human to
+record: version round-trip, configuration (RAM sizes, card presence — TODO
+item 2), name lists (structure, no values asserted), `read_preset`
+checksum recomputation (TODO item 1's ER-2 bench step), a full-bank
+request's per-frame checksum status, and a timing probe of `PRESET_GAP`.
+Selecting card presets is left as a listed manual step, since it moves the
+unit (TODO item 9).
+
+## Honest limits
+
+- **No write path.** Nothing sends a data write to the unit; `select` is the
+  only emitter and plays a preset. `restore` is not offered.
+- **No category filter.** The Morpheus printed catalog carries no categories;
+  there is nothing to filter on.
+- **`PRESET_GAP` is a guess** (TODO item 3), labelled as one; the bench
+  measures it.
+- **The card's select bank is unresolved** (TODO item 9: 2 vs 3). emorphed
+  sends 2 from the manual's arithmetic; the wrong value lands one bank off.
+- **Unnumbered replies' checksum status is unknown** (TODO item 1). `parse`
+  strips the checksum only for the three numbered data messages.
+- Patch names are not redistributed: `emu/data/catalog.json` is gitignored
+  and generated by `tools/extract_catalog.py` from your own files.
 
 ## Development checks
 
