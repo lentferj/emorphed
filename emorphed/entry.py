@@ -38,10 +38,14 @@ import sys
 #: ``0.2.0`` is the version that added ``midi.open_remembered_or_swept``'s
 #: ``on_fallback`` hook, the per-file ownership guard in the settings cache,
 #: and the ``__version__`` whose absence used to be undetectable.
-MINIMUM = (0, 2, 0)
+#:
+#: ``0.4.2`` is what emorphed asks features from: ``build.build_of`` for the
+#: about line, the ``ui.report.ReportScreen`` frame; the undo seam's
+#: ``plan``/``settle`` needs 0.4.1 or newer. The gate stays stdlib-only.
+MINIMUM = (0, 4, 2)
 
 #: Where to get it; on PyPI since 0.2.0.
-SOURCE = "vinsynlib>=0.2.0"
+SOURCE = "vinsynlib>=0.4.2"
 
 
 def _release_parts(version: str, width: int) -> tuple[int, ...] | None:
