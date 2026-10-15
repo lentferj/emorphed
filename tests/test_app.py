@@ -28,6 +28,7 @@ from emorphed.demo import DemoDevice
 from emu import banks
 from emu import catalog as cat
 from emu import favorites as fav
+from vinsynlib.ui.modals import RatingFilter
 
 
 @pytest.fixture
@@ -265,3 +266,46 @@ class TestStructuralRules:
                 ):
                     offenders.append(node.name)
         assert not offenders, f"worker(s) {offenders} set _busy themselves"
+
+
+class TestUndoPins:
+    def test_busy_undo_refuses(self, app: "EmorphedApp") -> None:
+        said = []
+
+        def capture(message: str, refused: bool = False) -> None:
+            said.append((message, refused))
+
+        app.notify_status = capture  # type: ignore[method-assign]
+        app._busy_gate.refuse("busy")
+        app.action_undo()
+        assert ("busy", True) in said
+
+    def test_favouriting_pushes_change(self, tmp_path: Path) -> None:
+        store = fav.Favorites(str(tmp_path / "f.db"))
+        try:
+            app = EmorphedApp(
+                DemoDevice(), catalog=cat.empty(), favorites=store
+            )
+            assert app._changes == []
+        finally:
+            store.close()
+
+
+class TestRatingFilterPins:
+    def test_filter_narrows_the_visible_list(self, tmp_path: Path) -> None:
+        store = fav.Favorites(str(tmp_path / "f.db"))
+        try:
+            bank = banks.region_ids()[0]
+            slots = banks.slots(bank)
+            store.add(bank, slots[0].number, name="invented 0", rating=3)
+            store.add(bank, slots[1].number, name="invented 1", rating=5)
+            app = EmorphedApp(
+                DemoDevice(), catalog=cat.empty(), favorites=store
+            )
+            app.rating_filter = RatingFilter(stars=3, at_least=False)
+            shown = [e.number for e in app._visible(bank)]
+            assert slots[0].number in shown
+            # the 5-star slot is filtered out under an exact-3 filter
+            assert slots[1].number not in shown
+        finally:
+            store.close()

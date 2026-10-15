@@ -51,6 +51,8 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -61,6 +63,7 @@ from textual.widgets import DataTable, Header, Static
 from emorphed.screens import KEY_HINTS, PromptScreen, ReportScreen
 from emu import banks
 from emu import catalog as cat
+from emu import livenames as _livenames
 from emu import messages as msg
 from emu.device import Device
 from emu.favorites import Favorite, Favorites
@@ -68,7 +71,9 @@ from vinsynlib.build import build_of
 from vinsynlib.cli import add_common_arguments, make_parser, validate_common
 from vinsynlib.keys import wrap_blocks as _wrap_blocks
 from vinsynlib.ui.hints import KeyHints
+from vinsynlib.ui.modals import RatingFilter, RatingFilterScreen
 from vinsynlib.ui.work import QUIET_BRIDGE_ERRORS, BusyGate
+from vinsynlib.undo import Record, UndoLog
 
 __all__ = ["KEY_HINTS", "EmorphedApp", "build_parser", "main", "wrap_blocks"]
 
@@ -107,6 +112,66 @@ _BRIDGE_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 
+@dataclass(frozen=True)
+class FavouriteChange:
+    bank_id: str
+    number: int
+    was_favourite: bool
+
+
+@dataclass(frozen=True)
+class RatingChange:
+    bank_id: str
+    number: int
+    was_rating: int
+
+
+@dataclass
+class TagNoteChange:
+    bank_id: str
+    number: int
+    field: str = "tags"
+    old: str | None = None
+    old_text: str | None = None
+    text: str | None = None
+    value: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.old_text is None and self.old is not None:
+            object.__setattr__(self, "old_text", self.old)
+        if self.old is None and self.old_text is not None:
+            object.__setattr__(self, "old", self.old_text)
+        if self.text is None:
+            object.__setattr__(self, "text", self.old_text)
+        if self.value is None:
+            object.__setattr__(self, "value", self.old_text)
+
+
+class _ChangesView(list[Any]):
+    def __init__(self, log: UndoLog, changes: list[Any]) -> None:
+        super().__init__(changes)
+        self._log = log
+
+    def append(self, change: object) -> None:
+        label = _change_label(change)
+        self._log.push(Record(label, change))
+        super().append(change)
+
+
+def _change_label(change: object) -> str:
+    if isinstance(change, FavouriteChange):
+        return "favourite"
+    if isinstance(change, RatingChange):
+        return "rating"
+    if isinstance(change, TagNoteChange):
+        field = getattr(change, "field", "tags")
+        return "note" if field == "note" else "tags"
+    return "change"
+
+
+Change = FavouriteChange | RatingChange | TagNoteChange
+
+
 class EmorphedApp(App[None]):
     """The browser."""
 
@@ -138,6 +203,10 @@ class EmorphedApp(App[None]):
         Binding("F", "cycle_favorites", "Favourites view"),
         Binding("t", "edit_tags", "Tags"),
         Binding("n", "edit_note", "Note"),
+        Binding("asterisk", "edit_rating", "Rating"),
+        Binding("V", "rating_filter", "Rating filter"),
+        Binding("z", "undo", "Undo"),
+        Binding("Z", "undo_all", "Undo all"),
         Binding("slash", "search", "Search"),
         Binding("i", "device_info", "Device"),
         Binding("question_mark", "help", "Help"),
@@ -152,8 +221,13 @@ class EmorphedApp(App[None]):
         catalog: cat.Catalog | None = None,
         favorites: Favorites | None = None,
         config_path: str | None = None,
+        live_names_path: str | None = None,
     ) -> None:
         super().__init__()
+        #: Everything ``z`` can reverse, in the order it happened. Made
+        #: first in ``__init__`` because a watcher can fire before the
+        #: constructor has finished -- the undo log has to be there first.
+        self._undo_log = UndoLog(gate_hook=self._undo_gate)
         self.device = device
         self.catalog = catalog if catalog is not None else cat.empty()
         #: Injected, never opened here, so a test cannot write into the
@@ -163,6 +237,8 @@ class EmorphedApp(App[None]):
         #: in tests, so a test cannot drop a config into the
         #: working directory.
         self._config_path = config_path
+        #: Where names read off the unit are kept between runs.
+        self._live_names_path = live_names_path
         self.view_mode = VIEW_ALL
         self._bank_ids: list[str] = banks.region_ids()
         self._current_bank = self._bank_ids[0]
@@ -172,6 +248,118 @@ class EmorphedApp(App[None]):
         #: tracks the exchange's in-progress state for an idle close.
         self._busy_gate = BusyGate()
         self._filling = False
+        # Load persisted rating filter from ui-state.
+        self.rating_filter: RatingFilter | None = None
+        if self._config_path is not None:
+            try:
+                from emu import config as _cfg
+
+                stars = _cfg.load_ui_int("rating_stars", self._config_path)
+                at_least = _cfg.load_ui_bool(
+                    "rating_at_least", self._config_path
+                )
+                if stars is not None:
+                    self.rating_filter = RatingFilter(
+                        stars=stars, at_least=bool(at_least)
+                    )
+            except Exception:
+                self.rating_filter = None
+                # The cache is best-effort; ignore a bad read.
+                _ = None
+
+    @property
+    def _changes(self) -> list[Any]:
+        return _ChangesView(
+            self._undo_log, [r.payload for r in self._undo_log]
+        )
+
+    @_changes.setter
+    def _changes(self, changes: list[Any]) -> None:
+        self._undo_log.clear()
+        for change in changes:
+            self._push_change(change)
+
+    def _push_change(self, change: object) -> None:
+        self._undo_log.push(Record(_change_label(change), change))
+
+    def _undo_gate(self) -> str | None:
+        return (
+            "busy"
+            if (
+                self._busy_gate.check() is not None
+                or self._busy_gate.is_busy()
+            )
+            else None
+        )
+
+    def action_undo(self) -> None:
+        self._undo_master_edits(1)
+
+    def action_undo_all(self) -> None:
+        self._undo_master_edits(None)
+
+    def _undo_master_edits(self, count: int | None = None) -> None:  # noqa: C901
+        taken = self._undo_log.plan(
+            len(self._changes) if count is None else count
+        )
+        if not taken:
+            refusal = self._undo_log.last_refusal
+            if refusal is not None:
+                self.notify_status(refusal, refused=True)
+            elif not self._changes:
+                self.notify_status("nothing to undo")
+            return
+        changes = [record.payload for record in taken]
+        favourites = 0
+        ratings = 0
+        tags_notes = 0
+        for change in changes:
+            if isinstance(change, FavouriteChange):
+                favourites += 1
+                self._undo_favourite(change)
+            elif isinstance(change, RatingChange):
+                ratings += 1
+                self._undo_rating(change)
+            elif isinstance(change, TagNoteChange):
+                tags_notes += 1
+                self._undo_tag_note(change)
+        if self.favorites is not None:
+            self._refill_keeping_place()
+        parts = []
+        if favourites:
+            parts.append(
+                f"{favourites} favourite{'s' if favourites != 1 else ''}"
+            )
+        if ratings:
+            parts.append(f"{ratings} rating{'s' if ratings != 1 else ''}")
+        if tags_notes:
+            parts.append(
+                f"{tags_notes} tag/note{'s' if tags_notes != 1 else ''}"
+            )
+        msg = "undid " + ", ".join(parts) if parts else "undid"
+        self.notify_status(msg)
+
+    def _undo_favourite(self, change: FavouriteChange) -> None:
+        if self.favorites is None:
+            return
+        name = self.catalog.display_name(change.bank_id, change.number)
+        self.favorites.toggle(change.bank_id, change.number, name=name)
+
+    def _undo_rating(self, change: RatingChange) -> None:
+        if self.favorites is None:
+            return
+        self.favorites.set_rating(
+            change.bank_id, change.number, change.was_rating
+        )
+
+    def _undo_tag_note(self, change: TagNoteChange) -> None:
+        if self.favorites is None:
+            return
+        text = change.old_text if change.old_text is not None else ""
+        if change.field == "note":
+            self.favorites.set_note(change.bank_id, change.number, text)
+        else:
+            self.favorites.set_tags(change.bank_id, change.number, text)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -261,12 +449,65 @@ class EmorphedApp(App[None]):
 
     def _visible(self, bank_id: str) -> list[banks.Slot]:
         if self.view_mode == VIEW_ALL_FAVOURITES:
-            return self._all_favourites()
-        entries = banks.slots(bank_id)
-        if self.view_mode == VIEW_BANK_FAVOURITES:
-            marked = self._favorite_keys(bank_id)
-            entries = [e for e in entries if e.number in marked]
-        return entries
+            entries = self._all_favourites()
+        else:
+            entries = banks.slots(bank_id)
+            if self.view_mode == VIEW_BANK_FAVOURITES:
+                marked = self._favorite_keys(bank_id)
+                entries = [e for e in entries if e.number in marked]
+        return self._by_rating(entries)
+
+    def _by_rating(self, entries: list[banks.Slot]) -> list[banks.Slot]:
+        if self.rating_filter is None or self.favorites is None:
+            return entries
+        flt = self.rating_filter
+        out = []
+        for entry in entries:
+            fav = self.favorites.get(entry.bank_id, entry.number)
+            rating = fav.rating if fav is not None else 0
+            if flt.at_least:
+                if rating >= flt.stars:
+                    out.append(entry)
+            elif rating == flt.stars:
+                out.append(entry)
+        return out
+
+    def action_rating_filter(self) -> None:
+        current = self.rating_filter or RatingFilter(stars=0, at_least=False)
+
+        def apply(value: RatingFilter | None) -> None:
+            if value is None:
+                return
+            if value.stars == 0 and value.at_least:
+                self.rating_filter = None
+            else:
+                self.rating_filter = value
+            self._save_rating_filter()
+            self._refill_keeping_place()
+
+        self.push_screen(RatingFilterScreen(current), apply)
+
+    def _save_rating_filter(self) -> None:
+        if self._config_path is None:
+            return
+        try:
+            from emu import config as _cfg
+
+            if self.rating_filter is None:
+                _cfg.save_ui_state("rating_stars", None, self._config_path)
+                _cfg.save_ui_state("rating_at_least", None, self._config_path)
+            else:
+                _cfg.save_ui_state(
+                    "rating_stars", self.rating_filter.stars, self._config_path
+                )
+                _cfg.save_ui_state(
+                    "rating_at_least",
+                    bool(self.rating_filter.at_least),
+                    self._config_path,
+                )
+        except Exception:
+            # The cache is best-effort.
+            _ = None
 
     def _cursor_entry(self) -> banks.Slot | None:
         """The row under the cursor, or None."""
@@ -388,7 +629,9 @@ class EmorphedApp(App[None]):
         # the row so a rating, tags, a note and the original date
         # survive being toggled off and on. As a delete followed by a
         # fresh add this destroyed all four, and this is one keystroke.
+        was = self.favorites.get(bank_id, entry.number) is not None
         now = self.favorites.toggle(bank_id, entry.number, name=name)
+        self._push_change(FavouriteChange(bank_id, entry.number, was))
         self.notify_status(f"{'favourited' if now else 'unfavourited'} {name}")
         self._refill_keeping_place()
 
@@ -427,7 +670,11 @@ class EmorphedApp(App[None]):
         def apply(value: str | None) -> None:
             if value is None:
                 return
+            old = existing.tags
             favorites.set_tags(where[0], where[1], value)
+            self._push_change(
+                TagNoteChange(where[0], where[1], "tags", old=old)
+            )
             self._refill_keeping_place()
             self.notify_status("tags set")
 
@@ -451,7 +698,11 @@ class EmorphedApp(App[None]):
         def apply(value: str | None) -> None:
             if value is None:
                 return
+            old = existing.note
             favorites.set_note(where[0], where[1], value)
+            self._push_change(
+                TagNoteChange(where[0], where[1], "note", old=old)
+            )
             self._refill_keeping_place()
             self.notify_status("note set")
 
@@ -670,7 +921,7 @@ class EmorphedApp(App[None]):
             return
         self.call_from_thread(self._adopt_kind, kind, names)
 
-    def _adopt_kind(self, kind: str, names: list[str]) -> None:
+    def _adopt_kind(self, kind: str, names: list[str]) -> None:  # noqa: C901
         """File a flat list of names back into the regions it spans.
 
         The reply is "every preset, in the order they appear" -- one list
@@ -694,6 +945,25 @@ class EmorphedApp(App[None]):
             self.favorites.refresh_names(
                 lambda bank, number: self.catalog.live_name(bank, number)
             )
+        # Persist the live names just read, keyed the way the catalog is.
+        live_path = getattr(self, "_live_names_path", None)
+        if live_path is not None:
+            to_save: dict[str, str] = {}
+            cursor = 0
+            for region in banks.regions(kind):
+                for number in range(region.count):
+                    if cursor >= len(names):
+                        break
+                    name = names[cursor].rstrip()
+                    to_save[_livenames.key(region.id, number)] = name
+                    cursor += 1
+                if cursor >= len(names):
+                    break
+            try:
+                _livenames.save(names=to_save, path=live_path)
+            except Exception:
+                # The cache is best-effort.
+                _ = None
         self._fill(self._current_bank)
         short = ""
         expected = sum(r.count for r in banks.regions(kind))
@@ -886,10 +1156,16 @@ def build_parser() -> argparse.ArgumentParser:
         config=True,
         favorites=True,
     )
+    parser.add_argument(
+        "--live-names",
+        default=None,
+        help="where names read from the unit are kept between runs "
+        "(default: beside the favourites database)",
+    )
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
     args = build_parser().parse_args(argv)
     from emu import config as cfg
 
@@ -965,8 +1241,15 @@ def main(argv: list[str] | None = None) -> int:
         except OSError:
             pass
 
+    from emu import livenames as _ln
     from emu.favorites import Favorites
 
+    catalog = cat.load(args.catalog)
+    try:
+        _ln.apply_to(catalog, getattr(args, "live_names", None))
+    except Exception:
+        # The cache is best-effort.
+        _ = None
     try:
         store = Favorites(args.favorites)
     except Exception as exc:
@@ -977,9 +1260,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"error: {exc}")
     app = EmorphedApp(
         device,
-        catalog=cat.load(args.catalog),
+        catalog=catalog,
         favorites=store,
         config_path=config_path,
+        live_names_path=getattr(args, "live_names", None)
+        or _ln.default_path(),
     )
     try:
         app.run()

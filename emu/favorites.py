@@ -35,6 +35,7 @@ from vinsynlib import favorites as _favorites
 from vinsynlib.favorites import (
     SCHEMA_VERSION,
     Favorite,
+    rating_cell,
 )
 
 __all__ = [
@@ -45,6 +46,7 @@ __all__ = [
     "Favorites",
     "data_dir",
     "default_path",
+    "rating_cell",
 ]
 
 #: The directory name used under whichever per-platform data root applies.
