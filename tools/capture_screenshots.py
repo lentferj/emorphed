@@ -28,6 +28,7 @@ import html
 import re
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from emorphed.app import EmorphedApp  # noqa: E402
 from emorphed.demo import DemoDevice  # noqa: E402
-from emorphed.scan import ScanOfferScreen  # noqa: E402
+from emorphed.scan import SCAN_OFFER, ScanOfferScreen  # noqa: E402
 from emu import catalog as cat  # noqa: E402
 from emu.favorites import Favorites  # noqa: E402
 from vinsynlib.ui.hints import KeyHints  # noqa: E402
@@ -53,6 +54,7 @@ OUT_DIR = REPO_ROOT / "docs" / "screenshots"
 SCREEN_W = 820
 BROWSER_SIZE = (132, 42)
 MODAL_SIZE = (120, 36)
+SCAN_OFFER_SIZE = (150, 30)
 
 MARKERS: dict[str, list[str]] = {
     "general": ["Qrk:PewterGu", "index"],
@@ -249,7 +251,26 @@ async def shot_help(app: Any, pilot: Any) -> str:
 
 async def shot_scan_offer(app: Any, pilot: Any) -> str:
     await wait_for_screen(app, pilot, ScanOfferScreen)
-    return await capture(app, pilot, "scan-offer")
+    svg = await capture(app, pilot, "scan-offer")
+    rendered = screen_text(svg)
+    # Guard against a frame that clips the offer's last word on the
+    # right edge: every wrapped offer line must appear verbatim, and no
+    # rendered line may reach the frame's right edge.
+    for raw in SCAN_OFFER.splitlines():
+        if not raw.strip():
+            continue
+        for line in textwrap.wrap(raw, SCAN_OFFER_SIZE[0]):
+            if line not in rendered:
+                raise AssertionError(
+                    f"scan-offer: wrapped line not visible in full: {line!r}"
+                )
+    longest = max((len(line) for line in rendered.splitlines()), default=0)
+    if not longest < SCAN_OFFER_SIZE[0]:
+        raise AssertionError(
+            f"scan-offer: longest rendered line {longest} does not fit frame "
+            f"width {SCAN_OFFER_SIZE[0]}"
+        )
+    return svg
 
 
 SHOTS: list[tuple[str, Any, tuple[int, int], bool, bool]] = [
@@ -262,7 +283,7 @@ SHOTS: list[tuple[str, Any, tuple[int, int], bool, bool]] = [
     ("search", shot_search, MODAL_SIZE, True, False),
     ("device", shot_device, MODAL_SIZE, True, False),
     ("help", shot_help, MODAL_SIZE, True, False),
-    ("scan-offer", shot_scan_offer, MODAL_SIZE, False, True),
+    ("scan-offer", shot_scan_offer, SCAN_OFFER_SIZE, False, True),
 ]
 
 
