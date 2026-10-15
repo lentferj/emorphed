@@ -267,6 +267,14 @@ class EmorphedApp(App[None]):
         #: the gate refuses on the main thread before a worker is spawned and
         #: tracks the exchange's in-progress state for an idle close.
         self._busy_gate = BusyGate()
+        #: One exchange at a time, claimed on the main thread. The main
+        #: thread takes it (non-blocking) before it spawns the worker and
+        #: the worker always releases it in a ``finally``. The gate alone
+        #: cannot carry this: entering the gate *clears* a refusal, so
+        #: between reserving one and entering it for real a second action
+        #: would find neither ``check()`` nor ``is_busy()`` set and start a
+        #: second worker. ``_busy`` reads this claim as a third signal.
+        self._exchange = threading.Lock()
         self._filling = False
         # Load persisted rating filter from ui-state.
         self.rating_filter: RatingFilter | None = None
@@ -303,18 +311,15 @@ class EmorphedApp(App[None]):
         self._undo_log.push(Record(_change_label(change), change))
 
     def _undo_gate(self) -> str | None:
-        return (
-            "busy"
-            if (
-                self._busy_gate.check() is not None
-                or self._busy_gate.is_busy()
-            )
-            else None
-        )
+        return "busy" if self._busy else None
 
     @property
     def _busy(self) -> bool:
-        return self._busy_gate.check() is not None or self._busy_gate.is_busy()
+        return (
+            self._busy_gate.check() is not None
+            or self._busy_gate.is_busy()
+            or self._exchange.locked()
+        )
 
     @_busy.setter
     def _busy(self, value: bool) -> None:
@@ -901,7 +906,7 @@ class EmorphedApp(App[None]):
         row = table.cursor_row
         if not 0 <= row < len(self._current):
             return
-        if self._busy_gate.check() is not None or self._busy_gate.is_busy():
+        if self._busy:
             self.notify_status("busy", refused=True)
             return
         entry = self._current[row]
@@ -915,21 +920,17 @@ class EmorphedApp(App[None]):
                 refused=True,
             )
             return
-        # Reserve on the main thread before spawning: a @work method
-        # returns at once, so two quick presses would otherwise both pass.
-        self._busy_gate.refuse("busy")
+        # Claim the one exchange on the main thread before spawning: a
+        # @work method returns at once, so two quick presses would
+        # otherwise both pass.
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
         self._select_worker(entry)
 
     @work(thread=True)
     def _select_worker(self, entry: banks.Slot) -> None:
-        """**MIDI only.** The gate tracks the exchange instead of ``_busy``."""
-        # Claim the reservation the main thread left pending, then take the
-        # gate for the duration of the exchange.
-        try:
-            with self._busy_gate:
-                pass
-        except RuntimeError:
-            pass
+        """**MIDI only.** The gate tracks the exchange in progress."""
         try:
             with self._busy_gate:
                 self.device.select(entry)
@@ -938,6 +939,8 @@ class EmorphedApp(App[None]):
                 self.notify_status, f"select: {exc}", refused=True
             )
             return
+        finally:
+            self._exchange.release()
         self.call_from_thread(
             self.notify_status,
             f"selected {entry.display} — Bank Select (CC32) "
@@ -947,24 +950,22 @@ class EmorphedApp(App[None]):
         )
 
     def action_read_names(self) -> None:
-        if self._busy_gate.check() is not None or self._busy_gate.is_busy():
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return
         entry = banks.region(self._current_bank)
-        self._busy_gate.refuse("busy")
         self._read_worker(entry.kind)
 
     @work(thread=True)
     def _read_worker(self, kind: str) -> None:
         """**MIDI only** -- the catalog is updated on the main thread.
 
-        One request for the whole kind. The gate tracks the exchange.
+        One request for the whole kind. The gate tracks the exchange in
+        progress.
         """
-        try:
-            with self._busy_gate:
-                pass
-        except RuntimeError:
-            pass
         try:
             with self._busy_gate:
                 self.call_from_thread(
@@ -977,6 +978,8 @@ class EmorphedApp(App[None]):
                 self.notify_status, f"read: {exc}", refused=True
             )
             return
+        finally:
+            self._exchange.release()
         self.call_from_thread(self._adopt_kind, kind, names)
 
     def _adopt_kind(self, kind: str, names: list[str]) -> None:  # noqa: C901
@@ -1083,7 +1086,11 @@ class EmorphedApp(App[None]):
                 "nothing to scan: no unit answered", refused=True
             )
             return
-        self._busy_gate.refuse("busy")
+        # One claim for the whole scan, not one per kind: a scan is a
+        # single exchange even though it sends a message per kind.
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
         self._scan_cancel = threading.Event()
         self.push_screen(ScanScreen(self._scan_cancel))
         self._scan_worker(kinds)
@@ -1091,11 +1098,6 @@ class EmorphedApp(App[None]):
     @work(thread=True)
     def _scan_worker(self, kinds: list[str]) -> None:
         """**MIDI only** -- one request per kind, cancel between kinds."""
-        try:
-            with self._busy_gate:
-                pass
-        except RuntimeError:
-            pass
         done = 0
         total = len(kinds)
         try:
@@ -1116,6 +1118,7 @@ class EmorphedApp(App[None]):
                     )
                     self.call_from_thread(self._adopt_kind, kind, names)
         finally:
+            self._exchange.release()
             self.call_from_thread(self._scan_finished, done, total)
 
     def _scan_progress(self, kind: str, done: int, total: int) -> None:
@@ -1161,16 +1164,17 @@ class EmorphedApp(App[None]):
         self.push_screen(PromptScreen("Search names:"), done)
 
     def action_device_info(self) -> None:
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
         self._info_worker()
 
     @work(thread=True)
     def _info_worker(self) -> None:
         """**MIDI only** -- the report is built on the main thread."""
-        try:
-            with self._busy_gate:
-                pass
-        except RuntimeError:
-            pass
         try:
             with self._busy_gate:
                 version = self.device.version()
@@ -1183,6 +1187,8 @@ class EmorphedApp(App[None]):
                 self.notify_status, f"device: {exc}", refused=True
             )
             return
+        finally:
+            self._exchange.release()
         self.call_from_thread(self._show_info, version, configuration)
 
     def _show_info(

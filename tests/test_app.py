@@ -16,15 +16,23 @@
 """The browser. Every fixture is invented; no MIDI port is ever opened."""
 
 import ast
+import asyncio
 import os
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
+from textual.pilot import Pilot
 from textual.widgets import DataTable
+from textual.worker import WorkerFailed
 
 from emorphed.app import VIEW_ALL_FAVOURITES, EmorphedApp
 from emorphed.demo import DemoDevice
+from emorphed.scan import ScanScreen
+from emorphed.screens import ReportScreen
 from emu import banks
 from emu import catalog as cat
 from emu import favorites as fav
@@ -39,6 +47,125 @@ def device() -> DemoDevice:
 @pytest.fixture
 def app(device: DemoDevice) -> EmorphedApp:
     return EmorphedApp(device, catalog=cat.empty())
+
+
+class InterleaveDemo(DemoDevice):
+    """A demo whose MIDI calls are slow enough to overlap on purpose.
+
+    It counts how many calls are inside the device at once, so a test can
+    tell "one exchange at a time" (peak 1) from two workers driving the
+    same device together (peak 2).
+    """
+
+    def __init__(self, delay: float = 0.2) -> None:
+        super().__init__()
+        self.delay = delay
+        self._count_lock = threading.Lock()
+        self.active = 0
+        self.peak = 0
+
+    def _enter(self) -> None:
+        with self._count_lock:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+
+    def _exit(self) -> None:
+        with self._count_lock:
+            self.active -= 1
+
+    def names(
+        self, kind: str = banks.Kind.PRESET, *, timeout: float | None = None
+    ) -> list[str]:
+        self._enter()
+        try:
+            time.sleep(self.delay)
+            return super().names(kind, timeout=timeout)
+        finally:
+            self._exit()
+
+    def select(self, target: banks.Slot) -> None:
+        self._enter()
+        try:
+            time.sleep(self.delay)
+            super().select(target)
+        finally:
+            self._exit()
+
+
+class Boom(Exception):
+    """Not in ``_BRIDGE_ERRORS``, so the worker's ``finally`` is the guard."""
+
+
+class ExplodingDemo(InterleaveDemo):
+    """A device whose ``select`` raises past the worker's error handling."""
+
+    def select(self, target: banks.Slot) -> None:
+        self._enter()
+        try:
+            raise Boom("synthetic select failure")
+        finally:
+            self._exit()
+
+
+class CountingLock:
+    """A ``threading.Lock`` that counts releases, for the scan test."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.releases = 0
+
+    def acquire(self, blocking: bool = True) -> bool:
+        return bool(self._lock.acquire(blocking=blocking))
+
+    def release(self) -> None:
+        self.releases += 1
+        self._lock.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+
+def _app_with(device: DemoDevice, tmp_path: Path) -> EmorphedApp:
+    return EmorphedApp(
+        device,
+        catalog=cat.empty(),
+        config_path=str(tmp_path / "config.toml"),
+    )
+
+
+def _capture(app: EmorphedApp) -> list[tuple[str, bool]]:
+    """Record every status message the app reports from now on."""
+    said: list[tuple[str, bool]] = []
+    original = app.notify_status
+
+    def capture(message: str, *, refused: bool = False) -> None:
+        said.append((message, refused))
+        original(message, refused=refused)
+
+    app.notify_status = capture  # type: ignore[method-assign]
+    return said
+
+
+async def _settle(
+    app: EmorphedApp, pilot: Pilot[None], tries: int = 400
+) -> None:
+    """Wait until the app reports no exchange in flight."""
+    for _ in range(tries):
+        if not app._busy:
+            return
+        await asyncio.sleep(0.01)
+        await pilot.pause()
+
+
+async def _wait_for_live(
+    app: EmorphedApp, pilot: Pilot[None], tries: int = 400
+) -> None:
+    """Wait until a read has landed a live name on the main thread."""
+    for _ in range(tries):
+        if app.catalog.live_name("P-RAM", 0) is not None:
+            return
+        await asyncio.sleep(0.01)
+        await pilot.pause()
 
 
 class TestStartup:
@@ -334,3 +461,113 @@ class TestRatingFilterPins:
             assert slots[1].number not in shown
         finally:
             store.close()
+
+
+class TestOneExchangeAtATime:
+    """Two workers must never drive the device at once.
+
+    The shared gate refuses on the main thread, but entering the gate
+    clears that refusal -- so a worker that consumes its own reservation
+    leaves a window where both ``check()`` and ``is_busy()`` are clear.
+    The exchange claim closes it: the main thread takes it before
+    spawning and the worker releases it in a ``finally``.
+    """
+
+    async def test_a_read_while_selecting_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        device = InterleaveDemo()
+        app = _app_with(device, tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.query_one("#slot-table").focus()
+            await pilot.pause()
+            said = _capture(app)
+            app.action_select()
+            app.action_read_names()
+            await _settle(app, pilot)
+            assert ("busy", True) in said
+            assert len(device.selected_log) == 1
+            assert device.peak == 1
+
+    async def test_a_select_while_reading_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        device = InterleaveDemo()
+        app = _app_with(device, tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.query_one("#slot-table").focus()
+            await pilot.pause()
+            said = _capture(app)
+            app.action_read_names()
+            app.action_select()
+            await _settle(app, pilot)
+            assert ("busy", True) in said
+            assert device.selected_log == []
+            assert device.peak == 1
+
+    async def test_a_cancelled_scan_releases_once(
+        self, tmp_path: Path
+    ) -> None:
+        device = InterleaveDemo()
+        app = _app_with(device, tmp_path)
+        counting = CountingLock()
+        app._exchange = cast("threading.Lock", counting)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_scan_device()
+            for _ in range(100):
+                if isinstance(app.screen, ScanScreen):
+                    break
+                await pilot.pause()
+            assert isinstance(app.screen, ScanScreen)
+            app.screen.action_cancel()
+            await _settle(app, pilot)
+            assert not counting.locked()
+            assert counting.releases == 1
+            said = _capture(app)
+            app.action_read_names()
+            await _settle(app, pilot)
+            assert ("busy", True) not in said
+            assert counting.releases == 2
+
+    async def test_the_lock_survives_an_uncaught_select_error(
+        self, tmp_path: Path
+    ) -> None:
+        device = ExplodingDemo()
+        app = _app_with(device, tmp_path)
+        # The error is not in _BRIDGE_ERRORS, so it reaches the worker's
+        # finally and then surfaces (wrapped) when the app shuts down. The
+        # claim must be free either way.
+        with pytest.raises(WorkerFailed) as caught:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.query_one("#slot-table").focus()
+                await pilot.pause()
+                app.action_select()
+                for _ in range(200):
+                    if not app._exchange.locked():
+                        break
+                    await pilot.pause()
+                assert not app._exchange.locked()
+                said = _capture(app)
+                app.action_read_names()
+                await _wait_for_live(app, pilot)
+                assert ("busy", True) not in said
+                assert app.catalog.live_name("P-RAM", 0) is not None
+        assert "synthetic select failure" in str(caught.value)
+
+    async def test_device_info_works_when_idle(self, tmp_path: Path) -> None:
+        """`i` now claims the exchange too; an idle press still reports."""
+        device = DemoDevice()
+        app = _app_with(device, tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_device_info()
+            for _ in range(200):
+                if isinstance(app.screen, ReportScreen):
+                    break
+                await pilot.pause()
+            assert isinstance(app.screen, ReportScreen)
+            assert not app._exchange.locked()
