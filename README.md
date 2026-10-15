@@ -216,7 +216,7 @@ ui-state wrappers.
 
 ```
 morphcli ports
-morphcli banks
+morphcli regions
 morphcli list {P-RAM,P-ROM,P-CARD,H-RAM,H-CARD,M-RAM,M-CARD}
 morphcli names {preset,hyperpreset,midimap}
 morphcli status
@@ -225,11 +225,11 @@ morphcli read FILE {preset,hyperpreset,midimap}
 morphcli fav [--add REGION:N] [--remove REGION:N] [--rate REGION:N 0-5] [--tags TAGS] [--note NOTE] [--tag TAG] [--search SEARCH] [--rating-at-least 0-5 | --rating-exactly 0-5] [--order {added,rating,bank,name}]
 morphcli tags
 morphcli backup list [--dir DIR] [--json]
-morphcli backup save {P-RAM,P-ROM,P-CARD,H-RAM,H-CARD,M-RAM,M-CARD} [--dir DIR] --yes
+morphcli backup save {P-RAM,P-ROM,P-CARD} [--dir DIR] --yes
 ```
 
 Global options go before the subcommand: `morphcli --demo ...`. `ports`,
-`banks`, `list`, `fav`, `tags`, `backup list` construct no bridge and open
+`regions`, `list`, `fav`, `tags`, `backup list` construct no bridge and open
 no port.
 
 ## Backups

@@ -388,16 +388,6 @@ device-ID guard to six projects should run for the channel loader too;
 `load_last_recv_port`'s `and value` truthiness check is of the same shape
 and worth a glance while there.
 
-**Status:** open, noticed by the review under ER-1.
-
-`.gitignore` and `catalog.load`'s warning both point at it and `tools/`
-is empty. The same shape as nanosyned's: `--syx` for what a dump can
-supply, `--manual` for the regions it cannot.
-
-It matters less here than in the siblings, because this instrument hands
-over every preset name in one exchange. It matters at all because two
-regions need a card fitted and a card is not always in.
-
 ## 9. The card's bank number when *selecting* may be 3, not 2
 
 **Status:** open, a bench question, raised by the edisyn cross-check.

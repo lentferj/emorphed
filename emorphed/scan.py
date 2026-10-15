@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # SPDX-FileCopyrightText: Copyright (C) 2026  emorphed contributors
 
-"""placeholder"""
+"""The scan offer and scan progress modal screens."""
 
 from __future__ import annotations
 

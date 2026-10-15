@@ -157,10 +157,16 @@ class TestTheEnvelope:
 
 class TestTheCliBackupCommands:
     def test_list_needs_no_unit(self, monkeypatch, capsys, tmp_path) -> None:
-        def explode(args):
+        def explode(*args, **kwargs):
             raise AssertionError("backup list tried to open a port")
 
-        monkeypatch.setattr(cli, "_build_device", explode, raising=False)
+        monkeypatch.setattr(
+            "emu.bridge.MorpheusBridge.open", explode, raising=False
+        )
+        monkeypatch.setattr(
+            "emu.bridge.MorpheusBridge.connect", explode, raising=False
+        )
+        monkeypatch.setattr("emorphed.demo.DemoDevice", explode, raising=False)
         assert cli.main(["backup", "list", "--dir", str(tmp_path)]) == 0
         assert f"no backups in {tmp_path}" in capsys.readouterr().out
 

@@ -367,7 +367,7 @@ def _cmd_backup_list(_device: Device | None, args: argparse.Namespace) -> None:
     if not rows:
         print(f"no backups in {directory}")
         return
-    print(f"{directory}\\n")
+    print(f"{directory}\n")
     table_rows = []
     for backup in rows:
         if backup.error is not None:
@@ -545,7 +545,7 @@ def build_parser() -> argparse.ArgumentParser:
     bp.add_argument("--dir", help="backup directory")
     bp.add_argument("--json", action="store_true")
     bp = bsub.add_parser("save", help="read a RAM region's presets to backups")
-    bp.add_argument("region", choices=banks.region_ids())
+    bp.add_argument("region", choices=banks.region_ids(banks.Kind.PRESET))
     bp.add_argument("--dir", help="backup directory (default: the data dir)")
     bp.add_argument("--yes", action="store_true")
 

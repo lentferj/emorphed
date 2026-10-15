@@ -361,14 +361,6 @@ def preserve_existing(banks_out: BankRows, output: str) -> bool:  # noqa: C901
     return merged
 
 
-def merge_found(
-    banks_out: BankRows,
-    found: BankRows,
-    output: str,
-) -> None:
-    merge_sources(banks_out, found)
-
-
 def main(argv: list[str] | None = None) -> int:  # noqa: C901
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(

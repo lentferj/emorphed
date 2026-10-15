@@ -74,7 +74,7 @@ from vinsynlib.cli import add_common_arguments, make_parser, validate_common
 from vinsynlib.keys import wrap_blocks as _wrap_blocks
 from vinsynlib.ui.hints import KeyHints
 from vinsynlib.ui.modals import RatingFilter, RatingFilterScreen
-from vinsynlib.ui.work import QUIET_BRIDGE_ERRORS, BusyGate
+from vinsynlib.ui.work import QUIET_BRIDGE_ERRORS, BusyGate, close_when_idle
 from vinsynlib.undo import Record, UndoLog
 
 __all__ = ["KEY_HINTS", "EmorphedApp", "build_parser", "main", "wrap_blocks"]
@@ -906,10 +906,6 @@ class EmorphedApp(App[None]):
             self._fill(self._current_bank)
         self.notify_status(f"{nxt} view")
 
-    # Aliases for any caller or test that names the action differently.
-    action_cycle_kind_view = action_cycle_kind
-    action_kind_view = action_cycle_kind
-    action_kind = action_cycle_kind
     # --- operations ---------------------------------------------------------
 
     def action_select(self) -> None:
@@ -1144,10 +1140,6 @@ class EmorphedApp(App[None]):
                 f"reading {kind} names ({done}/{total} kinds, silent)"
             )
 
-    def _scan_apply(self, kind: str, names: list[str]) -> None:
-        """Alias retained for the family's per-bank style call sites."""
-        self._adopt_kind(kind, names)
-
     def _scan_finished(self, done: int, total: int) -> None:
         screen = self.screen
         if isinstance(screen, ScanScreen):
@@ -1169,9 +1161,9 @@ class EmorphedApp(App[None]):
                 self.notify_status(f"nothing matching {text!r}")
                 return
             lines = [f"{len(hits)} match(es) for {text!r}", ""]
-            for bank_id, program_change, name, _disagrees in hits[:400]:
+            for bank_id, number, name, _disagrees in hits[:400]:
                 try:
-                    entry = banks.slot(bank_id, program_change)
+                    entry = banks.slot(bank_id, number)
                 except LookupError:
                     continue
                 lines.append(
@@ -1298,6 +1290,11 @@ Keys
   f         favourite the slot under the cursor
   F         all slots / favourites here / every favourite
   t n       tags, note
+  *         rate the slot under the cursor
+  V         rating filter
+  z Z       undo / undo all
+  k         kind view
+  S         scan names
   i         what the unit says it is
   q         quit
 """
@@ -1458,7 +1455,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
         app.run()
     finally:
         store.close()
-        device.close()
+        with close_when_idle(device, gate=app._busy_gate):
+            pass
     return 0
 
 
