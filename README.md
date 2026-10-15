@@ -174,6 +174,8 @@ python -m emorphed --live-names PATH   # where names read from the unit are kept
 Two panes: regions on the left, that region's slots on the right. Favourites,
 tags, notes, search, device info. Morpheus-specific:
 
+![Browser with regions and slots](docs/screenshots/general.png)
+
 - **One message gets every name.** `r` reads all names of the current kind in
   a single exchange — this instrument can do that and its siblings cannot.
   Reading names is **silent**: it plays nothing. Names from the unit show
@@ -182,11 +184,23 @@ tags, notes, search, device info. Morpheus-specific:
   hyperpreset → midimap views. Names for all three kinds are read the same
   silent way. `enter` selects presets only; hyperpresets and midimaps are
   refused with a plain sentence (`no Program Change reaches a midimap at all`).
+
+![Hyperpreset kind view](docs/screenshots/kind-hyper.png)
+
+![Midimap kind view](docs/screenshots/kind-midimap.png)
+
 - **Favourites**, with ratings, tags and notes, in SQLite under the per-platform
   data directory. `f` favourites the slot under the cursor, `t`/`n` set tags
   and note, `*` rates it 0–5. `F` cycles all slots → this bank's favourites →
   every favourite; `V` narrows by rating (exactly, or that many and up; stacks
   on top of the view).
+
+![Favourites for this bank](docs/screenshots/favourites-bank.png)
+
+![All favourites](docs/screenshots/favourites-all.png)
+
+![Rating filter screen](docs/screenshots/rating-filter.png)
+
 - **Undo.** `z` reverses the last favourites/rating/tags/notes change, `Z` all
   of them, restoring previous values. The undo log is the favourites store's
   log, not a separate buffer.
@@ -198,15 +212,24 @@ tags, notes, search, device info. Morpheus-specific:
   per kind) with progress on a shared `ScanScreen`; cancel is checked between
   kinds. A scan offer appears when the catalog is empty. No sound accompanies
   any of this on the Morpheus — there is no per-bank play.
+
+![Scan offer prompt](docs/screenshots/scan-offer.png)
+
 - **Device ID is its own thing.** `d` sets the SysEx device ID (0–15 on the
   wire), `c`/`[`/`]` the MIDI channel. A wrong device ID is answered with
   silence, which is indistinguishable from a wrong cable.
+
+![Device info screen](docs/screenshots/device.png)
 
 Keys (full set): arrows move (never sends anything); tab switches pane; `⏎`
 select on the unit (presets only); `r` read names; `/` search; `[`/`]`/`c`
 channel; `d` device ID; `f` favourite; `F` favourites view; `t`/`n` tags/note;
 `*` rating; `V` rating filter; `z`/`Z` undo; `k` kind view; `S` scan; `i`
 device info; `?` help; `q` quit.
+
+![Search screen](docs/screenshots/search.png)
+
+![Help screen](docs/screenshots/help.png)
 
 Remembered between runs: the rating filter (`rating_stars`, `rating_at_least`)
 and the scan-offer dismissal (`scan_offer_dismissed`), via the config's
