@@ -321,18 +321,6 @@ class EmorphedApp(App[None]):
             or self._exchange.locked()
         )
 
-    @_busy.setter
-    def _busy(self, value: bool) -> None:
-        # Compatibility pin only: the gate owns the busy state. Tests that set
-        # it directly (the legacy pin) are migrated to ``_busy_gate.refuse``;
-        # this keeps an assignment from crashing a stray caller.
-        if value:
-            if self._busy_gate.check() is None:
-                self._busy_gate.refuse("busy")
-        else:
-            with self._busy_gate._lock:
-                self._busy_gate._refused = None
-
     def action_undo(self) -> None:
         self._undo_master_edits(1)
 
