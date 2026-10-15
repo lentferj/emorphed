@@ -662,9 +662,7 @@ class EmorphedApp(App[None]):
         # looking at and left the one they were. _fill has always read the
         # row's own bank; these did not.
         bank_id = entry.bank_id
-        name = self.catalog.display_name(
-            bank_id, entry.number, kind=entry.kind
-        )
+        name = self.catalog.display_name(bank_id, entry.number)
         # Favorites.toggle, not remove-then-add: un-favouriting keeps
         # the row so a rating, tags, a note and the original date
         # survive being toggled off and on. As a delete followed by a
@@ -793,16 +791,10 @@ class EmorphedApp(App[None]):
         try:
             table.clear()
             for entry in self._current:
-                name = self.catalog.display_name(
-                    entry.bank_id, entry.number, kind=entry.kind
-                )
-                if self.catalog.differs(
-                    entry.bank_id, entry.number, kind=entry.kind
-                ):
+                name = self.catalog.display_name(entry.bank_id, entry.number)
+                if self.catalog.differs(entry.bank_id, entry.number):
                     shown = f"[b]{name}[/b] [dim]*[/dim]"
-                elif self.catalog.is_live(
-                    entry.bank_id, entry.number, kind=entry.kind
-                ):
+                elif self.catalog.is_live(entry.bank_id, entry.number):
                     shown = f"[b]{name}[/b]"
                 else:
                     shown = name
@@ -827,14 +819,10 @@ class EmorphedApp(App[None]):
             self.query_one("#detail", Static).update("")
             return
         entry = self._current[row]
-        name = self.catalog.display_name(
-            entry.bank_id, entry.number, kind=entry.kind
-        )
+        name = self.catalog.display_name(entry.bank_id, entry.number)
         source = (
             "read from the unit"
-            if self.catalog.is_live(
-                entry.bank_id, entry.number, kind=entry.kind
-            )
+            if self.catalog.is_live(entry.bank_id, entry.number)
             else "from the catalog"
         )
         if entry.region.needs_card:
@@ -1007,10 +995,7 @@ class EmorphedApp(App[None]):
                 if cursor >= len(names):
                     break
                 self.catalog.set_live_name(
-                    region.id,
-                    number,
-                    names[cursor].rstrip(),
-                    kind=kind,
+                    region.id, number, names[cursor].rstrip()
                 )
                 cursor += 1
                 adopted += 1
@@ -1028,7 +1013,7 @@ class EmorphedApp(App[None]):
                     if cursor >= len(names):
                         break
                     name = names[cursor].rstrip()
-                    to_save[_livenames.key(region.id, number, kind)] = name
+                    to_save[_livenames.key(region.id, number)] = name
                     cursor += 1
                 if cursor >= len(names):
                     break

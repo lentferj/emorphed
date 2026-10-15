@@ -154,8 +154,8 @@ class TestReadingNames:
             await pilot.press("r")
             for _ in range(30):
                 await pilot.pause()
-            assert app.catalog.live_name("P-RAM", 0, kind="preset") is not None
-            assert app.catalog.live_name("P-ROM", 0, kind="preset") is not None
+            assert app.catalog.live_name("P-RAM", 0) is not None
+            assert app.catalog.live_name("P-ROM", 0) is not None
 
     async def test_a_missing_card_leaves_its_region_empty(
         self, app: EmorphedApp
@@ -167,7 +167,32 @@ class TestReadingNames:
             await pilot.press("r")
             for _ in range(30):
                 await pilot.pause()
-            assert app.catalog.live_name("P-CARD", 0, kind="preset") is None
+            assert app.catalog.live_name("P-CARD", 0) is None
+
+
+class TestPrintedNamesComeBack:
+    """The key grammar is kindless on both front ends, so a printed name
+    reaches the browser before anything has been read off the unit."""
+
+    async def test_a_printed_name_shows_before_any_read(self) -> None:
+        catalog = cat.Catalog([cat.Entry("P-RAM", 0, "Invented Name")])
+        app = EmorphedApp(DemoDevice(), catalog=catalog)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#slot-table", DataTable)
+            assert table.get_cell("P-RAM:000", "name") == "Invented Name"
+
+    async def test_a_live_name_wins_and_is_marked(self) -> None:
+        catalog = cat.Catalog([cat.Entry("P-RAM", 0, "Invented Name")])
+        catalog.set_live_name("P-RAM", 0, "Other")
+        app = EmorphedApp(DemoDevice(), catalog=catalog)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#slot-table", DataTable)
+            shown = table.get_cell("P-RAM:000", "name")
+            assert "Other" in shown
+            assert "*" in shown
+            assert "Invented Name" not in shown
 
 
 class TestFavouritesActOnTheRowNotThePane:

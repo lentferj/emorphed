@@ -190,14 +190,9 @@ class TestFlow:
                     break
                 await pilot.pause()
             assert not app._busy
-            assert app.catalog.live_name("P-RAM", 0, kind="preset") is not None
-            assert (
-                app.catalog.live_name("H-RAM", 0, kind="hyperpreset")
-                is not None
-            )
-            assert (
-                app.catalog.live_name("M-RAM", 0, kind="midimap") is not None
-            )
+            assert app.catalog.live_name("P-RAM", 0) is not None
+            assert app.catalog.live_name("H-RAM", 0) is not None
+            assert app.catalog.live_name("M-RAM", 0) is not None
 
     async def test_cancel(self, tmp_path: Path) -> None:
         app = make(tmp_path, device=SlowDemo())
