@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -60,6 +61,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import DataTable, Header, Static
 
+from emorphed.scan import SCAN_OFFER, ScanOfferScreen, ScanScreen
 from emorphed.screens import KEY_HINTS, PromptScreen, ReportScreen
 from emu import banks
 from emu import catalog as cat
@@ -195,6 +197,7 @@ class EmorphedApp(App[None]):
         # Enter is NOT bound here: a focused DataTable consumes it for its
         # own row selection, so it arrives as RowSelected instead.
         Binding("r", "read_names", "Read names"),
+        Binding("S", "scan_device", "Scan device"),
         Binding("left_square_bracket", "channel_down", "Channel -"),
         Binding("right_square_bracket", "channel_up", "Channel +"),
         Binding("c", "pick_channel", "Set channel"),
@@ -214,7 +217,7 @@ class EmorphedApp(App[None]):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         device: Device,
         *,
@@ -222,6 +225,8 @@ class EmorphedApp(App[None]):
         favorites: Favorites | None = None,
         config_path: str | None = None,
         live_names_path: str | None = None,
+        demo: bool = False,
+        offer_scan: bool = False,
     ) -> None:
         super().__init__()
         #: Everything ``z`` can reverse, in the order it happened. Made
@@ -239,6 +244,15 @@ class EmorphedApp(App[None]):
         self._config_path = config_path
         #: Where names read off the unit are kept between runs.
         self._live_names_path = live_names_path
+        #: Whether this is the demo device. The demo invents its names, so a
+        #: scan of it must never be written to the real catalog.
+        self._demo = demo
+        #: Whether to offer a scan when there is no catalog at all. Set by
+        #: the entrypoint; off by default so a test never gets a modal it
+        #: did not ask for.
+        self._offer_scan = offer_scan
+        #: Raised by the scan modal's Cancel and checked between kinds.
+        self._scan_cancel = threading.Event()
         self.view_mode = VIEW_ALL
         self._bank_ids: list[str] = banks.region_ids()
         self._current_bank = self._bank_ids[0]
@@ -291,6 +305,22 @@ class EmorphedApp(App[None]):
             )
             else None
         )
+
+    @property
+    def _busy(self) -> bool:
+        return self._busy_gate.check() is not None or self._busy_gate.is_busy()
+
+    @_busy.setter
+    def _busy(self, value: bool) -> None:
+        # Compatibility pin only: the gate owns the busy state. Tests that set
+        # it directly (the legacy pin) are migrated to ``_busy_gate.refuse``;
+        # this keeps an assignment from crashing a stray caller.
+        if value:
+            if self._busy_gate.check() is None:
+                self._busy_gate.refuse("busy")
+        else:
+            with self._busy_gate._lock:
+                self._busy_gate._refused = None
 
     def action_undo(self) -> None:
         self._undo_master_edits(1)
@@ -419,6 +449,8 @@ class EmorphedApp(App[None]):
             else "no catalog -- numbers only. Build one with "
             "tools/extract_catalog.py, or press r to read from the unit."
         )
+        if self._offer_scan:
+            self.set_timer(0.6, self._maybe_offer_scan)
 
     # --- filling ------------------------------------------------------------
 
@@ -974,6 +1006,115 @@ class EmorphedApp(App[None]):
             )
         self.notify_status(f"read {adopted} {kind} name(s){short}")
 
+    def _maybe_offer_scan(self) -> None:
+        """Offer a scan when there is nothing to start from."""
+        if self._demo or self._busy or self.catalog:
+            return
+        from emu import config as _cfg
+
+        try:
+            if _cfg.load_ui_bool("scan_offer_dismissed", default=False):
+                return
+        except Exception:  # noqa: S110
+            pass
+        self.push_screen(
+            ScanOfferScreen(SCAN_OFFER),
+            self._scan_offer_answered,
+        )
+
+    def _scan_offer_answered(self, answer: str | None) -> None:
+        if answer == "never":
+            from emu import config as _cfg
+
+            if self._config_path is not None:
+                try:
+                    _cfg.save_ui_state(
+                        "scan_offer_dismissed", True, self._config_path
+                    )
+                except Exception:  # noqa: S110
+                    pass
+            else:
+                try:
+                    _cfg.save_ui_state("scan_offer_dismissed", True)
+                except Exception:  # noqa: S110
+                    pass
+            return
+        if answer == "scan":
+            self.action_scan_device()
+
+    def action_scan_device(self) -> None:
+        if self._demo:
+            self.notify_status(
+                "the demo invents its names; nothing to scan", refused=True
+            )
+            return
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        kinds = list(banks.Kind.ALL)
+        if not kinds:
+            self.notify_status(
+                "nothing to scan: no unit answered", refused=True
+            )
+            return
+        self._busy_gate.refuse("busy")
+        self._scan_cancel = threading.Event()
+        self.push_screen(ScanScreen(self._scan_cancel))
+        self._scan_worker(kinds)
+
+    @work(thread=True)
+    def _scan_worker(self, kinds: list[str]) -> None:
+        """**MIDI only** -- one request per kind, cancel between kinds."""
+        try:
+            with self._busy_gate:
+                pass
+        except RuntimeError:
+            pass
+        done = 0
+        total = len(kinds)
+        try:
+            with self._busy_gate:
+                for kind in kinds:
+                    if self._scan_cancel.is_set():
+                        break
+                    try:
+                        names = self.device.names(kind)
+                    except _BRIDGE_ERRORS as exc:
+                        self.call_from_thread(
+                            self.notify_status, f"scan: {exc}", refused=True
+                        )
+                        continue
+                    done += 1
+                    self.call_from_thread(
+                        self._scan_progress, kind, done, total
+                    )
+                    self.call_from_thread(self._adopt_kind, kind, names)
+        finally:
+            self.call_from_thread(self._scan_finished, done, total)
+
+    def _scan_progress(self, kind: str, done: int, total: int) -> None:
+        screen = self.screen
+        if isinstance(screen, ScanScreen):
+            screen.set_progress(
+                f"reading {kind} names ({done}/{total} kinds, silent)"
+            )
+
+    def _scan_apply(self, kind: str, names: list[str]) -> None:
+        """Alias retained for the family's per-bank style call sites."""
+        self._adopt_kind(kind, names)
+
+    def _scan_finished(self, done: int, total: int) -> None:
+        screen = self.screen
+        if isinstance(screen, ScanScreen):
+            screen.dismiss()
+        cancelled = self._scan_cancel.is_set()
+        if cancelled:
+            self.notify_status(f"scan stopped after {done} of {total} kinds")
+        else:
+            self.notify_status(
+                f"scanned {done} kind(s); names kept for next time"
+            )
+
     def action_search(self) -> None:
         def done(text: str | None) -> None:
             if not text:
@@ -1265,6 +1406,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
         config_path=config_path,
         live_names_path=getattr(args, "live_names", None)
         or _ln.default_path(),
+        demo=args.demo,
+        offer_scan=not args.demo,
     )
     try:
         app.run()
