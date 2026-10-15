@@ -20,10 +20,15 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
+from typing import Any, cast
 
+from emu import backup as bk
 from emu import banks, config, dumps
 from emu import catalog as cat
+from emu import favorites as favmod
+from emu import messages as m
 from emu.device import Device
+from vinsynlib import render
 from vinsynlib.cli import (
     add_common_arguments,
     channel_of,
@@ -35,21 +40,7 @@ __all__ = ["build_parser", "main"]
 
 
 def _table(rows: Sequence[Sequence[str]], headers: Sequence[str]) -> str:
-    if not rows:
-        return "(nothing)"
-    widths = [
-        max(len(str(r[i])) for r in (*rows, headers))
-        for i in range(len(headers))
-    ]
-    out = [
-        "  ".join(str(h).ljust(w) for h, w in zip(headers, widths)).rstrip(),
-        "  ".join("-" * w for w in widths),
-    ]
-    for row in rows:
-        out.append(
-            "  ".join(str(c).ljust(w) for c, w in zip(row, widths)).rstrip()
-        )
-    return "\n".join(out)
+    return render.table(headers, rows, empty="(nothing)")
 
 
 def _cmd_regions(_device: Device | None, _args: argparse.Namespace) -> None:
@@ -165,7 +156,314 @@ def _cmd_read(_device: Device | None, args: argparse.Namespace) -> None:
         print(_table(rows, ["#", "name"]))
 
 
-OFFLINE = {"regions", "list", "read"}
+def _favorites(args: argparse.Namespace) -> favmod.Favorites:
+    return favmod.Favorites(getattr(args, "favorites", None))
+
+
+def _catalog(args: argparse.Namespace) -> cat.Catalog:
+    return cat.load(getattr(args, "catalog", None))
+
+
+def _parse_slot(text: str) -> tuple[str, int]:
+    for separator in (":", "/", " "):
+        if separator in text:
+            bank_id, _, number = text.partition(separator)
+            try:
+                return bank_id.strip(), int(number)
+            except ValueError:
+                break
+    raise SystemExit(
+        f"error: {text!r} is not a slot; "
+        "write it as REGION:NUMBER, e.g. P-RAM:001"
+    )
+
+
+def _rating_stars(value: object, flag: str) -> int:
+    try:
+        stars = int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        raise SystemExit(f"error: {flag} wants 0-5, not {value!r}")
+    if not 0 <= stars <= 5:
+        raise SystemExit(f"error: {flag} wants 0-5, not {stars}")
+    return int(stars)
+
+
+def _rated(args: argparse.Namespace, rows: list[Any]) -> list[Any]:
+    if getattr(args, "rating_at_least", None) is not None:
+        stars = _rating_stars(args.rating_at_least, "--rating-at-least")
+        return [row for row in rows if row.rating >= stars]
+    if getattr(args, "rating_exactly", None) is not None:
+        stars = _rating_stars(args.rating_exactly, "--rating-exactly")
+        return [row for row in rows if row.rating == stars]
+    return rows
+
+
+def _cmd_fav(_device: Device | None, args: argparse.Namespace) -> None:  # noqa: PLR0915
+    from vinsynlib.favorites import rating_cell
+
+    favorites = _favorites(args)
+    catalog = _catalog(args)
+    try:
+        if args.add:
+            bank_id, number = _parse_slot(args.add)
+            name = (
+                catalog.display_name(bank_id, number)
+                if hasattr(catalog, "display_name")
+                else (catalog.name(bank_id, number) or "")
+            )
+            existing = favorites.get(bank_id, number)
+            if existing is None:
+                rating, tags, note = 0, "", ""
+            else:
+                rating = existing.rating
+                tags = existing.tags
+                note = existing.note
+            if getattr(args, "rating", None) is not None:
+                rating = _rating_stars(args.rating, "--rating")
+            if getattr(args, "tags", None) is not None:
+                tags = args.tags
+            if getattr(args, "note", None) is not None:
+                note = args.note
+            favorites.add(
+                bank_id, number, name=name, rating=rating, tags=tags, note=note
+            )
+            print(f"added {bank_id} {number:03d}")
+            return
+        if args.rate:
+            bank_id, number = _parse_slot(args.rate[0])
+            if favorites.get(bank_id, number) is None:
+                raise SystemExit(
+                    f"error: {bank_id} {number:03d} is not a favourite; "
+                    f"add it first"
+                )
+            stars = _rating_stars(args.rate[1], "--rate")
+            favorites.set_rating(bank_id, number, stars)
+            print(f"rated {bank_id} {number:03d} {stars}")
+            return
+        if args.remove:
+            bank_id, number = _parse_slot(args.remove)
+            if favorites.remove(bank_id, number):
+                print(f"removed {bank_id} {number:03d}")
+            else:
+                print(
+                    f"{bank_id} {number:03d} was not a favourite",
+                    file=__import__("sys").stderr,
+                )
+            return
+        if getattr(args, "tag", None):
+            rows = favorites.with_tag(args.tag)
+        elif getattr(args, "search", None):
+            rows = favorites.search(args.search)
+        else:
+            rows = favorites.all(order=args.order)
+        rows = _rated(args, rows)
+        if not rows:
+            print("no favourites", file=__import__("sys").stderr)
+            return
+        table = []
+        for fav in rows:
+            try:
+                slot = banks.slot(fav.bank_id, fav.number)
+                wire = [
+                    str(getattr(slot, "msb", "?")),
+                    str(getattr(slot, "lsb", "?")),
+                    str(getattr(slot, "program_change", "?")),
+                ]
+            except LookupError:
+                wire = ["?", "?", "?"]
+            table.append(
+                [
+                    fav.bank_id,
+                    f"{fav.number:03d}",
+                    fav.name
+                    or (
+                        catalog.display_name(fav.bank_id, fav.number)
+                        if hasattr(catalog, "display_name")
+                        else (catalog.name(fav.bank_id, fav.number) or "")
+                    ),
+                    *wire,
+                    rating_cell(fav.rating),
+                    fav.tags,
+                    fav.note,
+                ]
+            )
+        print(
+            _table(
+                table,
+                [
+                    "bank",
+                    "#",
+                    "name",
+                    "MSB",
+                    "LSB",
+                    "PC",
+                    "rating",
+                    "tags",
+                    "note",
+                ],
+            )
+        )
+    finally:
+        favorites.close()
+
+
+def _cmd_tags(_device: Device | None, args: argparse.Namespace) -> None:
+    favorites = _favorites(args)
+    try:
+        counts = favorites.tags()
+    finally:
+        favorites.close()
+    if not counts:
+        print("no tags", file=__import__("sys").stderr)
+        return
+    print(
+        _table([[tag, str(n)] for tag, n in counts.items()], ["tag", "count"])
+    )
+
+
+def _cmd_ports(_device: Device | None, _args: argparse.Namespace) -> None:
+
+    from vinsynlib import midi
+
+    try:
+        ins, outs = midi.list_ports()
+    except midi.MidiUnavailable as exc:
+        raise SystemExit(f"error: {exc}")
+    print(
+        midi.render_ports(
+            ins, outs, likely=[], likely_label="looks like an E-mu"
+        )
+    )
+
+
+def _backup_dir(args: argparse.Namespace) -> str:
+    return args.dir or bk.default_dir()
+
+
+def _cmd_backup_list(_device: Device | None, args: argparse.Namespace) -> None:
+    import json
+
+    directory = _backup_dir(args)
+    rows = bk.list_backups(args.dir)
+    if getattr(args, "json", False):
+        payload = {
+            "directory": directory,
+            "backups": [
+                {
+                    "id": backup.id,
+                    "kind": backup.kind,
+                    "slot": backup.slot,
+                    "name": backup.name,
+                    "saved": _when(backup.saved),
+                    "device_id": backup.device_id,
+                    "source": backup.source,
+                    "error": backup.error,
+                }
+                for backup in rows
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+        return
+    if not rows:
+        print(f"no backups in {directory}")
+        return
+    print(f"{directory}\\n")
+    table_rows = []
+    for backup in rows:
+        if backup.error is not None:
+            table_rows.append([backup.id, "", "", "", backup.error])
+            continue
+        table_rows.append(
+            [
+                backup.id,
+                backup.kind,
+                backup.name,
+                _when(backup.saved),
+                backup.device_id,
+            ]
+        )
+    print(_table(table_rows, ["id", "kind", "name", "saved", "device"]))
+
+
+def _when(saved: float) -> str:
+    import time as _time
+
+    if not saved:
+        return ""
+    return _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(saved))
+
+
+def _cmd_backup_save(device: Device, args: argparse.Namespace) -> None:
+    import time as _time
+
+    from emu import bridge as _bridge
+
+    if not getattr(args, "yes", False):
+        raise SystemExit(
+            "error: reading a whole RAM region needs --yes (128 requests)"
+        )
+    entry = banks.region(args.region)
+    if entry.kind != banks.Kind.PRESET:
+        raise SystemExit(
+            f"error: {entry.id} is not a preset region; preset backups only"
+        )
+    directory = _backup_dir(args)
+    total = entry.count
+    done = 0
+    print(f"reading {entry.label} ({total})...", file=__import__("sys").stderr)
+    device_any = cast(Any, device)
+    for slot in banks.slots(entry.id):
+        if done > 0:
+            _time.sleep(_bridge.PRESET_GAP)
+        words = device_any.read_preset(slot.index)
+        bk.save_preset(
+            words,
+            device_id=device.device_id,
+            slot=slot.index,
+            name=m_decode_name(words),
+            source="emorphed (backup save)",
+            directory=args.dir,
+        )
+        done += 1
+        print(
+            render.progress("preset", done, total),
+            end="",
+            file=__import__("sys").stderr,
+            flush=True,
+        )
+    print("", file=__import__("sys").stderr)
+    print(f"saved {done} preset(s) to {directory}")
+
+
+def m_decode_name(words: Any) -> str:
+    try:
+        return m.decode_name(list(words)[: m.NAME_CHARS]).rstrip()
+    except Exception:
+        return ""
+
+
+def _cmd_backup(_device: Device | None, args: argparse.Namespace) -> None:
+    if args.backup_command == "list":
+        _cmd_backup_list(_device, args)
+    elif args.backup_command == "save":
+        _cmd_backup_save(cast(Device, _device), args)
+    else:
+        raise SystemExit(
+            f"error: unknown backup command {args.backup_command!r}"
+        )
+
+
+def _offline(args: argparse.Namespace) -> bool:
+    if args.command in OFFLINE:
+        return True
+    is_backup_list = (
+        args.command == "backup"
+        and getattr(args, "backup_command", None) == "list"
+    )
+    return is_backup_list
+
+
+OFFLINE = {"regions", "list", "read", "fav", "tags", "ports"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -185,6 +483,7 @@ def build_parser() -> argparse.ArgumentParser:
         config=True,
         demo=True,
         yes=True,
+        favorites=True,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -210,6 +509,46 @@ def build_parser() -> argparse.ArgumentParser:
         default=banks.Kind.PRESET,
         choices=list(banks.Kind.ALL),
     )
+
+    sp = sub.add_parser("fav", help="the favourites database")
+    sp.add_argument("--add", metavar="REGION:N")
+    sp.add_argument("--remove", metavar="REGION:N")
+    sp.add_argument("--rating", type=int, default=None)
+    sp.add_argument(
+        "--rate",
+        nargs=2,
+        metavar=("REGION:N", "0-5"),
+        help="rate a favourite you already have",
+    )
+    sp.add_argument("--tags", default=None)
+    sp.add_argument("--note", default=None)
+    sp.add_argument("--tag", default=None, help="favourites with this tag")
+    sp.add_argument("--search", default=None)
+    ratings = sp.add_mutually_exclusive_group()
+    ratings.add_argument(
+        "--rating-at-least", type=int, default=None, metavar="0-5"
+    )
+    ratings.add_argument(
+        "--rating-exactly", type=int, default=None, metavar="0-5"
+    )
+    sp.add_argument(
+        "--order", default="added", choices=["added", "rating", "bank", "name"]
+    )
+
+    sub.add_parser("tags", help="tags in use, with counts")
+
+    sub.add_parser("ports", help="MIDI ports on this host")
+
+    sp = sub.add_parser("backup", help="preset backups: list, save")
+    bsub = sp.add_subparsers(dest="backup_command", required=True)
+    bp = bsub.add_parser("list", help="backups on disk")
+    bp.add_argument("--dir", help="backup directory")
+    bp.add_argument("--json", action="store_true")
+    bp = bsub.add_parser("save", help="read a RAM region's presets to backups")
+    bp.add_argument("region", choices=banks.region_ids())
+    bp.add_argument("--dir", help="backup directory (default: the data dir)")
+    bp.add_argument("--yes", action="store_true")
+
     return parser
 
 
@@ -220,6 +559,10 @@ COMMANDS: dict[str, Callable[..., int | None]] = {
     "status": _cmd_status,
     "select": _cmd_select,
     "read": _cmd_read,
+    "fav": _cmd_fav,
+    "tags": _cmd_tags,
+    "ports": _cmd_ports,
+    "backup": _cmd_backup,
 }
 
 
@@ -244,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("error: --device-id is 0-15 on a Morpheus")
 
     device: Device | None = None
-    if args.command not in OFFLINE:
+    if not _offline(args):
         if args.demo:
             from emorphed.demo import DemoDevice
 

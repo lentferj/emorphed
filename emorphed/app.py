@@ -50,25 +50,25 @@ from __future__ import annotations
 
 import argparse
 import sys
-import threading
 from collections.abc import Sequence
-from typing import Optional
 
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
-from textual.widgets import DataTable, Header, Input, Label, Static
+from textual.containers import Horizontal
+from textual.widgets import DataTable, Header, Static
 
+from emorphed.screens import KEY_HINTS, PromptScreen, ReportScreen
 from emu import banks
 from emu import catalog as cat
 from emu import messages as msg
 from emu.device import Device
 from emu.favorites import Favorite, Favorites
+from vinsynlib.build import build_of
 from vinsynlib.cli import add_common_arguments, make_parser, validate_common
 from vinsynlib.keys import wrap_blocks as _wrap_blocks
 from vinsynlib.ui.hints import KeyHints
+from vinsynlib.ui.work import QUIET_BRIDGE_ERRORS, BusyGate
 
 __all__ = ["KEY_HINTS", "EmorphedApp", "build_parser", "main", "wrap_blocks"]
 
@@ -86,24 +86,6 @@ VIEW_LABELS = {
     VIEW_ALL_FAVOURITES: "every favourite, all banks",
 }
 
-KEY_HINTS = (
-    "↑↓ move",
-    "tab pane",
-    "⏎ select on the unit",
-    "r read names",
-    "/ search",
-    "[ ] channel",
-    "c set channel",
-    "f favourite",
-    "F favourites view",
-    "t tags",
-    "n note",
-    "d device ID",
-    "i device",
-    "? help",
-    "q quit",
-)
-
 
 def wrap_blocks(blocks: Sequence[str], width: int, sep: str = _SEP) -> str:
     """Pack hints into lines no wider than ``width``.
@@ -115,69 +97,14 @@ def wrap_blocks(blocks: Sequence[str], width: int, sep: str = _SEP) -> str:
     return _wrap_blocks(blocks, width, sep)
 
 
-class ReportScreen(ModalScreen[None]):
-    """A scrollable block of text."""
-
-    DEFAULT_CSS = """
-    ReportScreen { align: center middle; }
-    ReportScreen > Vertical {
-        width: 84; height: 80%; border: thick $accent;
-        background: $surface; padding: 1 2;
-    }
-    ReportScreen .body { height: 1fr; overflow-y: auto; }
-    """
-
-    BINDINGS = [
-        Binding("escape", "close", "Close"),
-        Binding("q", "close", "Close"),
-    ]
-
-    def __init__(self, title: str, body: str) -> None:
-        super().__init__()
-        self._title = title
-        self._body = body
-
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Label(f"[b]{self._title}[/b]")
-            yield Static(self._body, classes="body")
-            yield Static("[dim]esc / q to close[/dim]")
-
-    def action_close(self) -> None:
-        self.dismiss(None)
-
-
-class PromptScreen(ModalScreen[Optional[str]]):
-    """One line of text."""
-
-    DEFAULT_CSS = """
-    PromptScreen { align: center middle; }
-    PromptScreen > Vertical {
-        width: 70; height: auto; border: thick $accent;
-        background: $surface; padding: 1 2;
-    }
-    """
-
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    def __init__(self, prompt: str, current: str = "") -> None:
-        super().__init__()
-        self._prompt = prompt
-        self._current = current
-
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Label(self._prompt)
-            yield Input(value=self._current, id="value")
-
-    def on_mount(self) -> None:
-        self.query_one("#value", Input).focus()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.dismiss(event.value)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
+#: Family quiet set plus this instrument's own bridge errors.
+_BRIDGE_ERRORS: tuple[type[BaseException], ...] = (
+    *QUIET_BRIDGE_ERRORS,
+    ValueError,
+    LookupError,
+    RuntimeError,
+    SystemError,
+)
 
 
 class EmorphedApp(App[None]):
@@ -237,11 +164,13 @@ class EmorphedApp(App[None]):
         #: working directory.
         self._config_path = config_path
         self.view_mode = VIEW_ALL
-        self._lock = threading.RLock()
         self._bank_ids: list[str] = banks.region_ids()
         self._current_bank = self._bank_ids[0]
         self._current: list[banks.Slot] = []
-        self._busy = False
+        #: Busy gate replaces the old ``_busy`` flag / RLock pair. Thread-safe:
+        #: the gate refuses on the main thread before a worker is spawned and
+        #: tracks the exchange's in-progress state for an idle close.
+        self._busy_gate = BusyGate()
         self._filling = False
 
     def compose(self) -> ComposeResult:
@@ -663,7 +592,7 @@ class EmorphedApp(App[None]):
         row = table.cursor_row
         if not 0 <= row < len(self._current):
             return
-        if self._busy:
+        if self._busy_gate.check() is not None or self._busy_gate.is_busy():
             self.notify_status("busy", refused=True)
             return
         entry = self._current[row]
@@ -677,25 +606,29 @@ class EmorphedApp(App[None]):
                 refused=True,
             )
             return
-        # Set here, not in the worker. A @work(thread=True) method returns
-        # at once and would set the flag on its own thread, so two quick
-        # presses both passed this check before either worker ran.
-        self._busy = True
+        # Reserve on the main thread before spawning: a @work method
+        # returns at once, so two quick presses would otherwise both pass.
+        self._busy_gate.refuse("busy")
         self._select_worker(entry)
 
     @work(thread=True)
     def _select_worker(self, entry: banks.Slot) -> None:
-        """**MIDI only.** The caller set ``_busy``; this clears it."""
+        """**MIDI only.** The gate tracks the exchange instead of ``_busy``."""
+        # Claim the reservation the main thread left pending, then take the
+        # gate for the duration of the exchange.
         try:
-            with self._lock:
+            with self._busy_gate:
+                pass
+        except RuntimeError:
+            pass
+        try:
+            with self._busy_gate:
                 self.device.select(entry)
-        except Exception as exc:
+        except _BRIDGE_ERRORS as exc:
             self.call_from_thread(
                 self.notify_status, f"select: {exc}", refused=True
             )
             return
-        finally:
-            self._busy = False
         self.call_from_thread(
             self.notify_status,
             f"selected {entry.display} — Bank Select (CC32) "
@@ -705,34 +638,36 @@ class EmorphedApp(App[None]):
         )
 
     def action_read_names(self) -> None:
-        if self._busy:
+        if self._busy_gate.check() is not None or self._busy_gate.is_busy():
             self.notify_status("busy", refused=True)
             return
         entry = banks.region(self._current_bank)
-        self._busy = True  # main thread; see action_select
+        self._busy_gate.refuse("busy")
         self._read_worker(entry.kind)
 
     @work(thread=True)
     def _read_worker(self, kind: str) -> None:
         """**MIDI only** -- the catalog is updated on the main thread.
 
-        One request for the whole kind. The caller set ``_busy``; this
-        clears it.
+        One request for the whole kind. The gate tracks the exchange.
         """
         try:
-            self.call_from_thread(
-                self.notify_status,
-                f"asking for every {kind} name in one message (silent)...",
-            )
-            with self._lock:
+            with self._busy_gate:
+                pass
+        except RuntimeError:
+            pass
+        try:
+            with self._busy_gate:
+                self.call_from_thread(
+                    self.notify_status,
+                    f"asking for every {kind} name in one message (silent)...",
+                )
                 names = self.device.names(kind)
-        except Exception as exc:
+        except _BRIDGE_ERRORS as exc:
             self.call_from_thread(
                 self.notify_status, f"read: {exc}", refused=True
             )
             return
-        finally:
-            self._busy = False
         self.call_from_thread(self._adopt_kind, kind, names)
 
     def _adopt_kind(self, kind: str, names: list[str]) -> None:
@@ -799,13 +734,18 @@ class EmorphedApp(App[None]):
     def _info_worker(self) -> None:
         """**MIDI only** -- the report is built on the main thread."""
         try:
-            with self._lock:
+            with self._busy_gate:
+                pass
+        except RuntimeError:
+            pass
+        try:
+            with self._busy_gate:
                 version = self.device.version()
                 try:
                     configuration = self.device.configuration()
                 except Exception:
                     configuration = None
-        except Exception as exc:
+        except _BRIDGE_ERRORS as exc:
             self.call_from_thread(
                 self.notify_status, f"device: {exc}", refused=True
             )
@@ -816,6 +756,8 @@ class EmorphedApp(App[None]):
         self, version: list[int], configuration: list[int] | None
     ) -> None:
         lines = [
+            _build_line(),
+            "",
             f"connection      {self.device.description}",
             f"device ID       {self.device.device_id}",
             f"MIDI channel    {self.device.channel + 1}",
@@ -856,7 +798,9 @@ class EmorphedApp(App[None]):
         self.push_screen(ReportScreen("Device", "\n".join(lines)))
 
     def action_help(self) -> None:
-        self.push_screen(ReportScreen("emorphed", _HELP))
+        self.push_screen(
+            ReportScreen("emorphed", f"{_build_line()}\n\n{_HELP}")
+        )
 
 
 _HELP = """What the Morpheus holds
@@ -903,8 +847,25 @@ Keys
 """
 
 
+def _build_line() -> str:
+    """One line naming both builds: this tool, and the library under it."""
+    parts = []
+    for name, origin in (("emorphed", __file__), ("vinsynlib", None)):
+        build = build_of(name, origin=origin)
+        where = build.version or "an unknown version"
+        if build.commit:
+            tagged = ""
+            if build.tag:
+                tagged = f", {build.tag.removeprefix('refs/tags/')}"
+            where += f" ({build.commit[:7]}{tagged})"
+        parts.append(f"{name} {where}")
+    return "built from " + " and ".join(parts)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = make_parser("emorphed", "Browse an E-mu Morpheus.")
+    parser = make_parser(
+        "emorphed", "Browse an E-mu Morpheus.", distribution="emorphed"
+    )
     # Every flag's help text is the family's, from vinsynlib.spec. This tool
     # used to word four of them its own way, which is how "SysEx device ID
     # 0-15; not the MIDI channel" came to be in one program and something
