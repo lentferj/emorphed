@@ -18,6 +18,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from emu import catalog as cat
 from emu import livenames
 
@@ -155,14 +157,18 @@ class TestStore:
         bank_id, _kind, number = cat.split_key(livenames.key("P-RAM", 13))
         assert (bank_id, number) == ("P-RAM", 13)
 
-    def test_save_works_in_both_argument_orders(self, tmp_path: Path) -> None:
+    def test_a_wrong_shaped_call_raises(self, tmp_path: Path) -> None:
+        """No argument-order guessing: a malformed call fails where it is made.
+
+        The old signature sniffed its arguments by type, so ``save(path)``
+        merged an empty file and ``save("P-RAM:013")`` was mistaken for a
+        path. With the two arguments declared, either mistake is a
+        ``TypeError`` at the call site instead.
+        """
         path = str(tmp_path / "live-names.json")
-        livenames.save(path, {"P-RAM:099": "Order A"})
-        assert livenames.load(path) == {"P-RAM:099": "Order A"}
-        livenames.save({"P-RAM:100": "Order B"}, path)
-        loaded = livenames.load(path)
-        assert loaded["P-RAM:099"] == "Order A"
-        assert loaded["P-RAM:100"] == "Order B"
+        with pytest.raises(TypeError):
+            livenames.save(path)  # type: ignore[arg-type]
+        assert not os.path.exists(path)
 
     def test_save_leaves_no_tmp_file(self, tmp_path: Path) -> None:
         path = str(tmp_path / "live-names.json")

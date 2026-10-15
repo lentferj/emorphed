@@ -42,6 +42,15 @@ Format is ``{"P-RAM:013": "..."}``, flat and keyed the same way
 normal and means nothing has been read yet; a corrupt one is worth a
 warning rather than an exception, because names are a convenience and
 refusing to open the browser over one would be the wrong trade.
+
+The key grammar is kindless: the bank id names the region (``"P-RAM"``,
+``"H-RAM"``, ``"M-RAM"``), and the region already fixes its kind. A
+stored key may still carry a middle kind component -- ``"BANK:NNN"`` and
+``"BANK:KIND:NNN"`` both occur -- but :func:`apply_to` reads and ignores
+it, so files written by either shape read correctly.
+
+:func:`save` takes its two arguments plainly, ``save(names, path)``, with
+the path optional and defaulting to :func:`default_path`.
 """
 
 from __future__ import annotations
@@ -89,24 +98,29 @@ def apply_to(catalog: Any, path: Any = None) -> int:
     guessed at, because a name attached to the wrong slot is worse than a
     missing one -- it is a plausible wrong answer.
 
-    Kept here rather than delegated because the library's version records a
-    *kind* alongside the name, and this instrument's catalog has none -- its
-    banks are presets, not two kinds sharing one id. The key grammar is the
-    library's all the same.
+    The sidecar's key grammar is kindless: the bank id names the region, so
+    a kind component in a stored key is redundant and is deliberately
+    ignored. The name is set on ``catalog`` without a kind, which is where
+    the browser looks it up; keys written by either shape -- the old
+    kindless form and the interim kindful one -- land on the same slot.
     """
     applied = 0
     for stored, name in load(path).items():
         try:
-            bank_id, kind, number = split_key(stored)
+            bank_id, _kind, number = split_key(stored)
         except ValueError:
             continue
         if bank_id:
-            catalog.set_live_name(bank_id, number, name, kind=kind)
+            # ``split_key``'s middle element is read and thrown away on
+            # purpose: the bank id names the region, so the kind is
+            # redundant and retired. Setting the name kindless is what makes
+            # both stored shapes meet the browser's kindless lookup.
+            catalog.set_live_name(bank_id, number, name)
             applied += 1
     return applied
 
 
-def save(*args: Any, **kwargs: Any) -> None:
+def save(names: dict[str, str], path: str | None = None) -> None:
     """Write the live layer out. Best effort -- a cache is not required.
 
     The library merges rather than replaces, so a ``--live-names`` file that
@@ -114,20 +128,15 @@ def save(*args: Any, **kwargs: Any) -> None:
     ``os.replace`` so a crash mid-write leaves the previous file intact.
     Only the default path is added here.
 
-    Accepted call shapes, so callers and tests may pass the names and the
-    path in either order: ``save(names, path)``, ``save(path, names)``,
-    ``save(names)``, ``save(path=path, names=names)``.
+    Arguments are taken plainly -- ``names`` first, the optional ``path``
+    second. There is no argument-order guessing: a call with the wrong
+    shape is a ``TypeError`` here, at the call site, rather than a silently
+    merged empty file or a key mistaken for a path.
     """
-    names: dict[str, str] | None = kwargs.get("names")
-    path: Any = kwargs.get("path")
-    for arg in args:
-        if isinstance(arg, dict):
-            names = arg
-        elif isinstance(arg, (str, os.PathLike)):
-            path = arg
-        elif arg is None:
-            continue
-    if names is None:
-        names = {}
+    if not isinstance(names, dict):
+        raise TypeError(
+            "save() takes the names mapping first and the path second; got "
+            f"{type(names).__name__} as names"
+        )
     target = path if path is not None else default_path()
     _livenames.save(str(target), names)
