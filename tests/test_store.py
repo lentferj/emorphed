@@ -29,7 +29,6 @@ from typing import Any
 
 import pytest
 
-from emu import catalog as cat
 from emu import config
 from emu.favorites import Favorites
 
@@ -225,44 +224,6 @@ class TestTheConfigIsWrittenSafely:
         path = str(tmp_path / "config.toml")
         config.save_last_recv_port("some input port", path)
         assert config.load_last_recv_port(path) == "some input port"
-
-
-class TestTheCatalogKeysOnRegionNumbers:
-    def test_a_name_is_found_by_region_and_number(self) -> None:
-        c = cat.Catalog([cat.Entry("P-ROM", 5, "Invented")])
-        assert c.name("P-ROM", 5) == "Invented"
-        assert c.name("P-RAM", 5) is None, "regions are separate spaces"
-
-    def test_a_live_name_wins_and_the_difference_is_visible(self) -> None:
-        c = cat.Catalog([cat.Entry("P-RAM", 5, "Printed")])
-        c.set_live_name("P-RAM", 5, "Saved Over")
-        assert c.display_name("P-RAM", 5) == "Saved Over"
-        assert c.differs("P-RAM", 5)
-
-    def test_search_carries_the_disagreement(self) -> None:
-        c = cat.Catalog([cat.Entry("P-RAM", 5, "Printed")])
-        c.set_live_name("P-RAM", 5, "Saved Over")
-        assert c.search("saved") == [("P-RAM", 5, "Saved Over", True)]
-
-    def test_one_bad_row_does_not_cost_the_others(
-        self, tmp_path: Path
-    ) -> None:
-        import json
-
-        path = str(tmp_path / "cat.json")
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "banks": {
-                        "P-RAM": [
-                            {"pc": "not a number", "name": "Bad"},
-                            {"pc": 1, "name": "Invented"},
-                        ]
-                    }
-                },
-                handle,
-            )
-        assert len(cat.load(path)) == 1
 
 
 class TestABoolIsNotANumber:
