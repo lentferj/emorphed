@@ -38,13 +38,16 @@ __all__ = [
     "PARAMS",
     "PARAM_BASE",
     "Param",
+    "choices_for",
     "fx_params",
+    "fx_params_for",
     "name_of",
     "offset_of",
     "param_at",
     "parse_dump",
     "set_name",
     "spell",
+    "values_for",
 ]
 
 
@@ -62,8 +65,13 @@ class Param:
     ``offset`` is the word's position (0-359) in a midimap body.
     ``low`` and ``high`` are inclusive, in the **signed** values the wire
     uses. ``choices`` names the enumerated values in the unit's own order;
-    empty means a plain integer range. ``note`` carries what the manual
-    says that does not fit in the range.
+    empty means a plain integer range. ``values`` is the wire value each entry
+    of ``choices`` stands for, in the same order; empty means the choices are
+    the contiguous integers ``low..high``. The manual is explicit (p.242,
+    "Effect Types"): "The effect type number sent via SysEx are unique IDs.
+    (they are not the index into the screens). Note that the A and B effect
+    IDs do not overlap." ``note`` carries what the manual says that does not
+    fit in the range.
     """
 
     offset: int
@@ -71,6 +79,7 @@ class Param:
     low: int
     high: int
     choices: tuple[str, ...] = ()
+    values: tuple[int, ...] = ()
     note: str = ""
 
 
@@ -285,52 +294,53 @@ _FX_PARAM_FALLBACK: tuple[tuple[str, int, int, tuple[str, ...]], ...] = (
 FX_PARAMS: dict[object, tuple[tuple[str, int, int, tuple[str, ...]], ...]] = {}
 
 
-def _register_fx_params(
-    names: Sequence[str],
+def _register_fx_params_by_id(
+    ids: Sequence[int],
     params: Sequence[Sequence[tuple[str, int, int, tuple[str, ...]]]],
-    register_indices: bool = True,
 ) -> None:
-    for index, (name, param_tuple) in enumerate(
-        zip(names, params, strict=True)
-    ):
-        params_tuple = tuple(param_tuple)
-        FX_PARAMS[name] = params_tuple
-        if register_indices:
-            FX_PARAMS[index] = params_tuple
+    # Key by the unit's unique effect ID, NOT by screen index. A and B IDs
+    # do not overlap, so a single dictionary keyed on the ID is unambiguous.
+    for fx_id, param_tuple in zip(ids, params, strict=True):
+        table = tuple(param_tuple)
+        if not table:
+            # Effects the manual gives no parameters ("No Effect", "Ring
+            # Modulate") fall back to the honest generic parameter rather
+            # than inventing names.
+            table = _FX_PARAM_FALLBACK
+        FX_PARAMS[fx_id] = table
 
 
-_register_fx_params(_FX_A_NAMES, _FX_A_PARAMS, register_indices=True)
-# B types keep their own positions displaced so A and B do not collide; for
-# B effects, look them up by name instead.
-for _name, _param_tuple in zip(_FX_B_NAMES, _FX_B_PARAMS, strict=True):
-    FX_PARAMS[_name] = tuple(_param_tuple)
+_register_fx_params_by_id(_FX_A_IDS, _FX_A_PARAMS)
+_register_fx_params_by_id(_FX_B_IDS, _FX_B_PARAMS)
 
 
+def fx_params_for(
+    type_value: int,
+) -> tuple[tuple[str, int, int, tuple[str, ...]], ...]:
+    "Parameters the given effect type defines, keyed by its unique ID."
+    try:
+        key = int(type_value)
+    except (TypeError, ValueError):
+        key = type_value
+    if key in FX_PARAMS:
+        return FX_PARAMS[key]
+    return _FX_PARAM_FALLBACK
+
+
+# Backwards-compatible thin alias: earlier callers (and tests) used this name.
+# It no longer interprets an integer as a screen index; string names are still
+# resolved to their unique effect id.
 def fx_params(
     type_value: object,
 ) -> tuple[tuple[str, int, int, tuple[str, ...]], ...]:
-    "Parameters the given effect type defines."
     if isinstance(type_value, str):
-        key: object = type_value
-    elif isinstance(type_value, int):
-        key = type_value
-    else:
-        try:
-            key = int(str(type_value))
-        except (TypeError, ValueError):
-            key = type_value
-    if key in FX_PARAMS:
-        return FX_PARAMS[key]
-    # wire id -> ui index fallback already handled by registered ids; failing
-    # that, try a positional interpretation
-    if isinstance(key, int):
-        for _names, params in (
-            (_FX_A_NAMES, _FX_A_PARAMS),
-            (_FX_B_NAMES, _FX_B_PARAMS),
+        for ids, names in (
+            (_FX_A_IDS, _FX_A_NAMES),
+            (_FX_B_IDS, _FX_B_NAMES),
         ):
-            if 0 <= key < len(params):
-                return tuple(params[key])
-    return _FX_PARAM_FALLBACK
+            if type_value in names:
+                type_value = ids[names.index(type_value)]
+    return fx_params_for(type_value)  # type: ignore[arg-type]
 
 
 _PAN: tuple[str, ...] = (
@@ -392,6 +402,7 @@ for _i in range(12):
             32,
             127,
             (),
+            (),
             _PARAM_MANUAL + "; char " + str(_i + 1) + " of 12",
         )
     )
@@ -408,23 +419,28 @@ for _channel in range(16):
                 _low,
                 _high,
                 _choices,
+                (),
                 _PARAM_MANUAL,
             )
         )
 
 # Global tail, offsets 332-359.
 _entries.append(
-    Param(332, "Prog Map", -1, 3, _PROG_MAP_CHOICES, _PARAM_MANUAL)
+    Param(332, "Prog Map", -1, 3, _PROG_MAP_CHOICES, (), _PARAM_MANUAL)
 )
 _entries.append(
     Param(
         333,
         "FX A Type",
         0,
-        len(_FX_A_NAMES) - 1,
+        25,
         _FX_A_NAMES,
+        _FX_A_IDS,
         _PARAM_MANUAL
-        + "; EFFECTS TYPES (manual pp. 41-52); "
+        + "; EFFECTS TYPES (manual pp. 41-52; unique IDs manual p.242): "
+        + '"The effect type number sent via SysEx are unique IDs. '
+        + "(they are not the index into the screens). Note that the A and B "
+        + 'effect IDs do not overlap." '
         + "base 0 = No Effect (manual's first A type is Room at 1)",
     )
 )
@@ -436,6 +452,7 @@ for _i in range(10):
             -8192,
             8191,
             (),
+            (),
             _PARAM_MANUAL
             + "; one of ten effect parameter words "
             + "(see fx_params for the selected type)",
@@ -445,10 +462,16 @@ _entries.append(
     Param(
         344,
         "FX B Type",
-        0,
-        len(_FX_B_NAMES) - 1,
+        128,
+        138,
         _FX_B_NAMES,
-        _PARAM_MANUAL + "; EFFECT TYPES (manual p. 53); base 0 = No Effect",
+        _FX_B_IDS,
+        _PARAM_MANUAL
+        + "; EFFECT TYPES (manual p. 53; unique IDs manual p.242): "
+        + '"The effect type number sent via SysEx are unique IDs. '
+        + "(they are not the index into the screens). Note that the A and B "
+        + 'effect IDs do not overlap." '
+        + "base 0 = No Effect (IDs start at 128)",
     )
 )
 for _i in range(10):
@@ -459,11 +482,12 @@ for _i in range(10):
             -8192,
             8191,
             (),
+            (),
             _PARAM_MANUAL + "; one of ten effect parameter words",
         )
     )
-_entries.append(Param(355, "FX A Amt", 0, 100, (), _PARAM_MANUAL))
-_entries.append(Param(356, "FX B Amt", 0, 100, (), _PARAM_MANUAL))
+_entries.append(Param(355, "FX A Amt", 0, 100, (), (), _PARAM_MANUAL))
+_entries.append(Param(356, "FX B Amt", 0, 100, (), (), _PARAM_MANUAL))
 _entries.append(
     Param(
         357,
@@ -471,11 +495,12 @@ _entries.append(
         0,
         101,
         (),
+        (),
         _PARAM_MANUAL + "; 101 = B->A only",
     )
 )
-_entries.append(Param(358, "FX A Bus", 0, 2, _FX_BUS, _PARAM_MANUAL))
-_entries.append(Param(359, "FX B Bus", 0, 2, _FX_BUS, _PARAM_MANUAL))
+_entries.append(Param(358, "FX A Bus", 0, 2, _FX_BUS, (), _PARAM_MANUAL))
+_entries.append(Param(359, "FX B Bus", 0, 2, _FX_BUS, (), _PARAM_MANUAL))
 
 PARAMS: tuple[Param, ...] = tuple(_entries)
 
@@ -531,10 +556,45 @@ def spell(param: Param, value: int) -> str:
             return chr(signed_value)
         return "?"
     if param.choices:
-        index = signed_value - param.low
+        if param.values:
+            try:
+                index = param.values.index(signed_value)
+            except ValueError:
+                index = -1
+        else:
+            index = signed_value - param.low
         if 0 <= index < len(param.choices):
             return param.choices[index]
     return str(signed_value)
+
+
+def choices_for(param: Param) -> tuple[tuple[int, str], ...]:
+    """Legal ``(value, label)`` pairs for a choices parameter.
+
+    Returned in the manual's **screen order** (the order ``param.choices``
+    holds), because that is the order the picker shows the entries; the
+    underlying wire value may be non-contiguous and out of numeric order
+    (manual p.242: effect type numbers are unique IDs, not screen indices).
+    """
+    if param.values:
+        return tuple(
+            (value, label)
+            for value, label in zip(param.values, param.choices, strict=True)
+        )
+    return tuple(
+        (param.low + index, label) for index, label in enumerate(param.choices)
+    )
+
+
+def values_for(param: Param) -> tuple[int, ...]:
+    """The legal values of ``param``.
+
+    For a ``values``-bearing choices parameter these are the unique IDs;
+    otherwise the contiguous integers ``param.low..param.high``.
+    """
+    if param.values:
+        return param.values
+    return tuple(range(param.low, param.high + 1))
 
 
 def name_of(words: Sequence[int]) -> str:

@@ -185,15 +185,16 @@ def test_fx_b_type_choices() -> None:
 
 
 def test_fx_params_spells_types() -> None:
-    # at least three manual effect types (manual pp. 42-52)
-    assert midimap.fx_params(1)[0][0] == "Decay Time"
-    assert any(p[0] == "Ambience" for p in midimap.fx_params(12))
-    assert any(p[0] == "LFO Rate" for p in midimap.fx_params(19))
+    # at least three manual effect types (manual pp. 42-52): keyed by unique
+    # effect ID, not by screen index.
+    assert midimap.fx_params_for(1)[0][0] == "Decay Time"
+    assert any(p[0] == "Ambience" for p in midimap.fx_params_for(19))
+    assert any(p[0] == "LFO Rate" for p in midimap.fx_params_for(11))
 
 
 def test_fx_params_fallback() -> None:
     # a value nobody documented falls back to the honest generic parameter
-    params = midimap.fx_params(100000)
+    params = midimap.fx_params_for(100000)
     assert params == (("Parm 1", -8192, 8191, ()),)
 
 
@@ -215,3 +216,63 @@ def test_name_helpers_pad_and_truncate() -> None:
 def test_name_helpers_refuse_bad_char() -> None:
     with pytest.raises(ValueError, match="32-127"):
         midimap.set_name([32] * 12, "Bad\x01")
+
+
+def test_fx_ids_match_names_and_ranges() -> None:
+    # manual p.242: unique IDs, not screen indices.
+    for offset, ids, names in (
+        (333, midimap._FX_A_IDS, midimap._FX_A_NAMES),
+        (344, midimap._FX_B_IDS, midimap._FX_B_NAMES),
+    ):
+        p = midimap.param_at(offset)
+        assert len(ids) == len(names)
+        assert set(ids).issubset(range(p.low, p.high + 1))
+        assert p.values == ids
+        assert p.choices == names
+
+
+def test_spell_fx_a_id_is_not_index() -> None:
+    # manual p.242, "Effect Types": "The effect type number sent via SysEx
+    # are unique IDs. (they are not the index into the screens)."
+    # ID 3 names the effect whose ID is 3, not the third screen entry.
+    p = midimap.param_at(333)
+    assert midimap.spell(p, 3) == "Plate 1"
+
+
+def test_spell_fx_b_first_id() -> None:
+    p = midimap.param_at(344)
+    assert midimap.spell(p, 128) == "No Effect"
+
+
+def test_spell_unknown_fx_id_is_number() -> None:
+    # ID 15 is deliberately absent from the A ID set (the gap at 15).
+    p = midimap.param_at(333)
+    assert midimap.spell(p, 15) == "15"
+
+
+def test_choices_for_and_values_for() -> None:
+    p = midimap.param_at(333)
+    assert midimap.values_for(p) == midimap._FX_A_IDS
+    assert midimap.choices_for(p) == tuple(
+        zip(midimap._FX_A_IDS, midimap._FX_A_NAMES, strict=True)
+    )
+
+
+def test_picker_round_trips() -> None:
+    p = midimap.param_at(333)
+    for value, label in midimap.choices_for(p):
+        assert midimap.spell(p, value) == label
+
+
+def test_fx_params_for_collisions() -> None:
+    assert midimap.fx_params_for(1) is not midimap.fx_params_for(129)
+    assert midimap.fx_params_for(1) != midimap.fx_params_for(129)
+
+
+def test_fx_params_fallback_for_effectless_types() -> None:
+    # manual: "No Effect" (both processors) and "Ring Modulate" have no
+    # documented parameters, so the honest generic fallback is used.
+    fallback = (("Parm 1", -8192, 8191, ()),)
+    assert midimap.fx_params_for(0) == fallback
+    assert midimap.fx_params_for(128) == fallback
+    assert midimap.fx_params_for(129) == fallback
