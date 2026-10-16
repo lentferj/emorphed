@@ -510,7 +510,30 @@ warning, since the stored value is zero-based and the display is not.
 **Source: the plan file `~/temp/emporhed_midimap_editor.txt` and the code
 that landed.** The recipe below is what the plan recorded; the
 "implemented" notes are what the code now does. Nothing here was measured
-on a unit: the whole path is synthetic until the write bench is run.
+on a unit until 2026-10-16, when the write bench was run (below).
+
+**The bench run, and the bug it found (2026-10-16).** `tools/bench_midimap_write.py
+--yes` was run against the unit (device 7, remembered port). Its first two
+runs FAILED, both informatively:
+
+* the first "passed" on a no-op: channel-1 volume was already 127, the +1
+  nudge clamped to 127, and the same value read back and "agreed". A
+  verification that cannot fail proves nothing, so the tool now picks its
+  direction from the value, walks three benign parameters (`Ch. Volume`,
+  `Ch. Pan`, `Ch. Mix Bus`) until one can move, and FAILS if none can;
+* the second genuinely differed -- write 126, read back 127. The write was
+  right and the READ-BACK was wrong: `read_parameter` re-read the *stored*
+  midimap dump, while a parameter write edits the *scratch* map. The
+  manual says it on the Midimap Request page (p.232): "**The scratch map
+  is accessed by requesting MASTER settings or individual parameter
+  requests.**" `read_parameter` now sends a Parameter Request (0x02) and
+  checks that the reply echoes the parameter it asked for (Parameter Data
+  is the one reply whose discriminator is the parameter number, not the
+  command alone); `read_midimap` stays the *stored* map and says so.
+
+With that fixed the bench passes on the unit: channel-1 volume 127 -> 126,
+read back and agreed; restored to 127, read back and agreed; a backup was
+saved first. The STORE half remains unverified on hardware.
 
 **The recipe and its sources.**
 

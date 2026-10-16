@@ -259,6 +259,11 @@ edit buffer per kind which is erased by changing which object is current
 
 * **The store is unverified on hardware.** Nothing has been written to a
   real unit; the whole path is synthetic until the bench runs.
+* **Midimap parameter writes are verified on the unit (2026-10-16)**: the
+  bench wrote channel-1 volume 127 -> 126, read it back through a
+  Parameter Request (the scratch map, manual p.232) and restored it. It
+  found a real bug on the way: the read-back had been re-reading the
+  *stored* dump. The STORE half is still unverified.
 * **The human-attended write bench** (`tools/bench_midimap_write.py`) has
   not been run: back up a midimap, change one benign parameter (a channel
   volume), read it back and verify, restore the backup. It refuses without
