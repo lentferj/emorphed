@@ -45,6 +45,8 @@ EXTRA_HINTS = (
     "V rating filter",
     "z undo",
     "Z undo all",
+    "m midimap edit",
+    "w write gate",
 )
 
 

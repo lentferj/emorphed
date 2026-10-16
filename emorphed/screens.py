@@ -82,6 +82,8 @@ KEY_HINTS = _view_key(
             "V rating filter",
             "z undo",
             "Z undo all",
+            "m midimap edit",
+            "w write gate",
         )
     )
 )
