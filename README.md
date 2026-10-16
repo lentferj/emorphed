@@ -116,7 +116,13 @@ plausible halves of numbers.
 
 **Bank Select is Controller 32**, with Controller 0 held at zero:
 `Bn 00 00 20 bb Cn pp`. That is the opposite way round from
-[nanosyned](../nanosyned)'s instrument, which ignores 32 entirely.
+[nanosyned](../nanosyned)'s instrument, which ignores 32 entirely. The
+bank number is **measured, not arithmetic** (2026-10-16): RAM presets are
+bank 0, ROM presets bank 1, RAM hyperpresets bank 2, card presets **bank
+3**, and card hyperpresets bank 4. A Program Change therefore does reach a
+hyperpreset — this card numbering is why a card preset was once sent one
+bank too low. A midimap has no Bank Select bank and no Program Change at
+all; it is made current over System Exclusive.
 
 **A preset index is not a program number.** The index is what SysEx
 addresses; a Program Map decides what program change reaches it. The code
@@ -203,8 +209,10 @@ tags, notes, search, device info. Morpheus-specific:
   in bold; a `*` marks a slot where the unit and the catalog disagree.
 - **Three kinds in one browser.** `k` cycles the right pane across preset →
   hyperpreset → midimap views. Names for all three kinds are read the same
-  silent way. `enter` selects presets only; hyperpresets and midimaps are
-  refused with a plain sentence (`no Program Change reaches a midimap at all`).
+  silent way. `enter` selects presets **and hyperpresets** — a Program
+  Change reaches a hyperpreset, sent with bank 2 (RAM) or bank 4 (card). A
+  midimap is refused with a plain sentence: no Program Change reaches a
+  midimap at all, it is made current over System Exclusive.
 
 ![Hyperpreset kind view](docs/screenshots/kind-hyper.png)
 
@@ -301,8 +309,9 @@ record: version round-trip, configuration (RAM sizes, card presence — TODO
 item 2), name lists (structure, no values asserted), `read_preset`
 checksum recomputation (TODO item 1's ER-2 bench step), a full-bank
 request's per-frame checksum status, and a timing probe of `PRESET_GAP`.
-Selecting card presets is left as a listed manual step, since it moves the
-unit (TODO item 9).
+Selecting is not in the suite because it moves the unit: that bank question
+was settled separately, by the human-attended
+`tools/bench_bank_numbers.py --yes`, which plays the unit (TODO item 9).
 
 ## Honest limits
 
@@ -312,8 +321,10 @@ unit (TODO item 9).
   there is nothing to filter on.
 - **`PRESET_GAP` is a guess** (TODO item 3), labelled as one; the bench
   measures it.
-- **The card's select bank is unresolved** (TODO item 9: 2 vs 3). emorphed
-  sends 2 from the manual's arithmetic; the wrong value lands one bank off.
+- **The card's select bank is 3, not 2** (TODO item 9, resolved 2026-10-16
+  by measurement). A card preset sends Bank Select **3**; hyperpresets are
+  banks 2 (RAM) and 4 (card). The earlier `index // 128` arithmetic sent 2,
+  which reached the hyperpresets instead.
 - **Unnumbered replies' checksum status is unknown** (TODO item 1). `parse`
   strips the checksum only for the three numbered data messages.
 - Patch names are not redistributed: `emu/data/catalog.json` is gitignored

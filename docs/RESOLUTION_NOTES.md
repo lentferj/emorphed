@@ -443,3 +443,64 @@ probe defect (`emu/bridge.py`) is fixed in `801afbf`: the
 remembered port is now probed with the remembered device ID, so the
 misleading "Probing every port" line no longer appears when the
 remembered port is the right one.
+
+## 21. The Bank Select mapping is measured — the card is bank 3 (2026-10-16)
+
+**Source: this run, not a document.** A human ran
+`tools/bench_bank_numbers.py --yes` on a powered-on Morpheus. The tool
+sends Bank Select + Program Change and asks the operator what was heard; it
+**plays the unit**, is human-attended only, and refuses to run without a
+TTY. The raw record is kept outside the checkout at
+`~/temp/bench_bank_run.txt`. Five probes, each Bank Select bank `ll` with
+Program Change 0 on the unit's channel (display 7 = wire `0xB6`):
+
+| ll | PC | the tool expected | the operator heard | reaches |
+| --- | --- | --- | --- | --- |
+| 0 | 0 | RAM preset 0 | "nothing, but the preset is correct" | presets, RAM (0-127) |
+| 1 | 0 | ROM preset 128 | "nothing, but preset is correct" | presets, ROM (128-255) |
+| 2 | 0 | hyperpreset 0 | `000-2` | hyperpresets, RAM (0-127) |
+| 3 | 0 | card preset 256 | "preset correct, but `000-3`" | presets, card (256-383) |
+| 4 | 0 | hyperpreset 128 | `000-4` | hyperpresets, card (128-255) |
+
+The unit's display is `NNN-B` = the object within the bank, then the bank
+number. The measured table is therefore fixed: **P-RAM 0, P-ROM 1, H-RAM 2,
+P-CARD 3, H-CARD 4.** Nothing here is arithmetic.
+
+**Two numberings, and the manual keeps them on different pages.** The Preset
+Request text (p.226) says "Values 0x0400 + the bank number (0-2)" for
+presets -- RAM/ROM/CARD. That is the **SysEx REQUEST** numbering and belongs
+to the request side only. The **Bank Select** numbering the wire actually
+uses is the p.159 box, "ll = Bank number (00-04)", the five rows above.
+Reading "bank 2" as a Bank Select byte is the bug the measurement caught: in
+the browser a `P-CARD` slot sent `ll=2` and reached the **hyperpresets**
+instead of the card presets. The companion commit (`2762c6e`) replaces the
+old `index // 128` arithmetic in `select_messages` with the fixed
+`BANK_SELECT` table (`emu/banks.py`) and renames the old `bank_of` to the
+request-side `request_bank`.
+
+**The edisyn cross-check is now confirmed, not merely suspected.** edisyn's
+Morpheus implementation (`EmuMorpheus.java:1262`, "because the card's actual
+bank is bank 3") bumps the card to 3 on the CC0/CC32 pair. The review
+recorded it as an open discrepancy (TODO item 9) because that class also
+covers the UltraProteus and the comment did not say which machine it was
+proven on. **This run confirms it for the Morpheus: the card is bank 3.**
+Its `CARD 384-511` dump comment is a separate, **dump-side** axis
+(`bank * 128 + number` with the card at bank 2); that is not the Bank Select
+axis and was not what the tool tested. The instrument's numberings stay
+distinct.
+
+**Why preset and hyperpreset share the program space.** Manual p.31,
+"Preset/Hyper to MIDI Channel Assign": a Midimap assigns a preset **or** a
+hyperpreset (program) per MIDI channel, which is why a Program Change
+reaches a hyperpreset at all and why the two kinds are interleaved across
+the five Bank Select banks. A midimap is not a program: p.159 is explicit
+that System Exclusive is the only way to make one current -- which is what
+`select_messages` refuses, and what the browser's midimap path sends over
+SysEx behind a confirmation (`a6e4c74`).
+
+**One tool bug before the measurement.** The first 2026-10-16 run of the
+same tool measured nothing: it read the **stored** MIDI channel (the unit
+keeps it zero-based, 6 for display 7) and subtracted one, so it addressed
+the wrong channel and heard silence. The human-answered record above is from
+the corrected tool. Stored channels are not display channels -- a useful
+warning, since the stored value is zero-based and the display is not.

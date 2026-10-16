@@ -194,15 +194,15 @@ The right pane now cycles across **preset → hyperpreset → midimap** on
 per kind, silent) and land in the right regions; names from the live read
 win over the catalog and persist through the same sidecar path. Display
 numbers follow `emu/banks.py` per kind; the card flag and writable flag are
-shown. `enter` selects presets only — hyperpresets and midimaps are refused
-with a plain sentence in `notify_status(..., refused=True)` styling, because
-no Program Change reaches a midimap at all. `tests/test_app.py` covers the
-cycle, the three reads landing in the right regions, the refusal sentence,
-and cursor silence.
+shown. `enter` selects presets **and hyperpresets** — a Program Change does
+reach a hyperpreset, with Bank Select bank 2 (RAM) or bank 4 (card), per the
+2026-10-16 measurement in item 9. A midimap is not refused outright: it has
+no Program Change, so it is made current over System Exclusive behind a
+confirmation (`a6e4c74`), which switches the unit to Multi mode and changes
+what plays. `tests/test_app.py` covers the cycle, the three reads landing in
+the right regions, and cursor silence.
 
-What remains, if anything: none tracked here. Whether a midimap can ever
-be selected by SysEx (not a Program Change) is a separate, unstarted
-decision and stays out of the browser.
+What remains, if anything: none tracked here.
 
 ## 5. The browser — DONE 2026-09-20
 
@@ -443,6 +443,9 @@ same file, so the bump could in principle be an UltraProteus-ism applied
 unconditionally. Its comment does not say which machine it was proven on.
 That is the bench's question, not the review's.
 
+**Settled 2026-10-16: it is right for the Morpheus too — the card is bank
+3 on the wire (TODO item 9, measured).**
+
 **Secondary observations:**
 
 * edisyn reads Instrument/Filter List Data replies as a 14-bit count then
@@ -515,30 +518,48 @@ device-ID guard to six projects should run for the channel loader too;
 `load_last_recv_port`'s `and value` truthiness check is of the same shape
 and worth a glance while there.
 
-## 9. The card's bank number when *selecting* may be 3, not 2
+## 9. The card's bank number when *selecting* is 3, not 2
 
-**Status:** open, a bench question, raised by the edisyn cross-check.
+**Status:** RESOLVED 2026-10-16, by measurement on the unit.
 
-`select_messages` sends `bank_of(index) = index // 128`, which is 2 for
-every P-CARD preset. A hardware-proven implementation elsewhere bumps the
-card to bank **3** on the Controller 0/32 pair while addressing the same
-preset as bank 2 in *dumps* -- which would make this instrument's habit
-of numbering things three different ways into a fourth.
+`select_messages` used to send `bank_of(index) = index // 128`, which is 2
+for every P-CARD preset. A hardware-proven implementation elsewhere bumped
+the card to bank **3** on the Controller 0/32 pair while addressing the same
+preset as bank 2 in *dumps*, which made this instrument's habit of numbering
+things three different ways into a fourth. The bench settled it: the card
+is **bank 3** for Bank Select.
 
-If that is right, selecting a card preset from emorphed lands one bank
-off. If it is an UltraProteus-ism applied unconditionally, it is right to
-ignore. Nothing here can tell without a Morpheus and a card.
+**The measured mapping** (`tools/bench_bank_numbers.py --yes`, 2026-10-16;
+the operator heard each object and named what it was):
 
-**The bench step:** select a card preset with bank 2, then with bank 3,
-and see which one arrives.
+| ll (Bank Select bank) | reaches |
+| --- | --- |
+| 0 | presets, RAM |
+| 1 | presets, ROM |
+| 2 | hyperpresets, RAM |
+| 3 | presets, card |
+| 4 | hyperpresets, card |
 
-**Blocked on:** item 1, and a card.
+**Two numberings, and that is how the bug arose.** The manual's "0x0400 +
+the bank number (0-2)" (p.226) is the **SysEx REQUEST** numbering --
+presets, RAM/ROM/CARD. The Bank Select numbering the wire actually uses is
+a different one: the p.159 box, "ll = Bank number (00-04)", the five rows
+above. Reading "bank 2" off the request side and sending it as a Bank
+Select byte is exactly the bug: `P-CARD` sent `ll=2`, which reached the
+**hyperpresets**, not the card presets. It is fixed in the companion commit
+`2762c6e` (the `BANK_SELECT` table in `emu/banks.py`, with `bank_of` renamed
+to the request-side `request_bank`).
 
-The bench (T9) was built and **ran 2026-10-15**. It does not drive the
-select-based settle itself — selecting moves the unit — so that step stays
-a listed manual bench step, and the run printed the configuration bytes and
-the card-backed regions emorphed maps (P-CARD/H-CARD/M-CARD), nothing more.
-No card presence or card bank number was established by this run.
+**Re-running it:** `tools/bench_bank_numbers.py --yes`, human-attended --
+it **plays the unit** and cannot be undone remotely, so it refuses to run
+without a TTY. The first run on 2026-10-16 measured nothing: the tool
+mis-converted the stored channel (the unit keeps it zero-based, 6 for
+display 7, and the tool subtracted one) -- a reminder that a stored channel
+is not a display channel. That was fixed before the useful run.
+
+**Blocked on:** nothing; the earlier 2026-10-15 bench had not driven the
+select step (selecting moves the unit) and established no card number, so
+it is superseded by this measurement.
 
 ---
 
