@@ -166,3 +166,52 @@ def test_spell_choices() -> None:
 def test_spell_name_block() -> None:
     param = midimap.param_at(0)
     assert midimap.spell(param, ord("A")) == "A"
+
+
+def test_fx_a_type_choices() -> None:
+    # manual p. 42: 25 "A" effects including "No Effect", base 0 first type
+    p = midimap.param_at(333)
+    assert p.label == "FX A Type"
+    assert p.choices
+    assert len(p.choices) == 25  # noqa: PLR2004
+
+
+def test_fx_b_type_choices() -> None:
+    # manual p. 53: 9 "B" effects including "No Effect"
+    p = midimap.param_at(344)
+    assert p.label == "FX B Type"
+    assert p.choices
+    assert len(p.choices) == 9  # noqa: PLR2004
+
+
+def test_fx_params_spells_types() -> None:
+    # at least three manual effect types (manual pp. 42-52)
+    assert midimap.fx_params(1)[0][0] == "Decay Time"
+    assert any(p[0] == "Ambience" for p in midimap.fx_params(12))
+    assert any(p[0] == "LFO Rate" for p in midimap.fx_params(19))
+
+
+def test_fx_params_fallback() -> None:
+    # a value nobody documented falls back to the honest generic parameter
+    params = midimap.fx_params(100000)
+    assert params == (("Parm 1", -8192, 8191, ()),)
+
+
+def test_name_helpers_roundtrip() -> None:
+    words = [32] * 12
+    name = "TestName1234"
+    new = midimap.set_name(words, name)
+    assert midimap.name_of(new) == name
+    assert words == [32] * 12  # input unmutated
+
+
+def test_name_helpers_pad_and_truncate() -> None:
+    padded = midimap.set_name([], "Hi")
+    assert midimap.name_of(padded) == "Hi          "
+    truncated = midimap.set_name([32] * 12, "A" * 20)
+    assert midimap.name_of(truncated) == "A" * 12
+
+
+def test_name_helpers_refuse_bad_char() -> None:
+    with pytest.raises(ValueError, match="32-127"):
+        midimap.set_name([32] * 12, "Bad\x01")

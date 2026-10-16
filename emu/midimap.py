@@ -34,12 +34,16 @@ from dataclasses import dataclass
 from emu import messages as m
 
 __all__ = [
+    "FX_PARAMS",
     "PARAMS",
     "PARAM_BASE",
     "Param",
+    "fx_params",
+    "name_of",
     "offset_of",
     "param_at",
     "parse_dump",
+    "set_name",
     "spell",
 ]
 
@@ -89,6 +93,245 @@ _MIX_BUS: tuple[str, ...] = (
 _OFF_ON: tuple[str, ...] = ("Off", "On")
 
 _FX_BUS: tuple[str, ...] = ("Main", "Sub1", "Sub2")
+
+# Effect type names as the manual lists them (effects section, pp. 42 and 53):
+# "A" effects (p. 42) include the reverbs and the rest; "B" effects (p. 53)
+# are the B processor's own set. "No Effect" is the first entry of each, the
+# silent/empty processor. The manual's grouped shorthand (Small Rooms 1 & 2,
+# Halls 1, 2 & 3, ...) expands to the individual effect types the unit
+# enumerates; the names and their order follow the manual's lists.
+_FX_A_NAMES: tuple[str, ...] = (
+    "No Effect",
+    "Room",
+    "Warm Room",
+    "Small Room 1",
+    "Small Room 2",
+    "Hall 1",
+    "Hall 2",
+    "Hall 3",
+    "Chamber 1",
+    "Chamber 2",
+    "Plate 1",
+    "Plate 2",
+    "Early Reflections 1",
+    "Early Reflections 2",
+    "Early Reflections 3",
+    "Early Reflections 4",
+    "Reverse Early Reflections",
+    "Rain",
+    "Shimmer",
+    "Stereo Flanger",
+    "Phaser",
+    "Stereo Chorus",
+    "Delay",
+    "Cross Delay",
+    "Echo",
+)
+
+_FX_B_NAMES: tuple[str, ...] = (
+    "No Effect",
+    "Fuzz",
+    "Fuzz Lite",
+    "Stereo Flanger",
+    "Phaser",
+    "Stereo Chorus",
+    "Delay",
+    "Cross Delay",
+    "Ring Modulate",
+)
+
+# A-effect parameter ranges, transcribed from the effect programming instruc-
+# tions (manual pp. 42-52): (label, low, high, choices). Choices stay empty
+# for every effect parameter (none of them is enumerated on the wire).
+_FX_A_PARAMS: tuple[tuple[tuple[str, int, int, tuple[str, ...]], ...], ...] = (
+    (),  # No Effect
+    (("Decay Time", 50, 250, ()),),  # Room
+    (("Decay Time", 50, 250, ()),),  # Warm Room
+    (("Decay Time", 10, 128, ()),),  # Small Room 1
+    (("Decay Time", 10, 128, ()),),  # Small Room 2
+    (("Decay Time", 100, 255, ()),),  # Hall 1
+    (("Decay Time", 100, 255, ()),),  # Hall 2
+    (("Decay Time", 100, 255, ()),),  # Hall 3
+    (("Decay Time", 50, 200, ()),),  # Chamber 1
+    (("Decay Time", 50, 200, ()),),  # Chamber 2
+    (("Decay Time", 80, 200, ()),),  # Plate 1
+    (("Decay Time", 80, 250, ()),),  # Plate 2
+    (("Ambience", 0, 100, ()),),  # Early Reflections 1
+    (("Ambience", 0, 100, ()),),  # Early Reflections 2
+    (("Ambience", 0, 100, ()),),  # Early Reflections 3
+    (("Ambience", 0, 100, ()),),  # Early Reflections 4
+    (("Ambience", 0, 100, ()),),  # Reverse Early Reflections
+    (("Decay Time", 100, 255, ()),),  # Rain
+    (("Decay Time", 50, 250, ()),),  # Shimmer
+    (  # Stereo Flanger
+        ("LFO Rate", 0, 255, ()),
+        ("LFO Depth", 0, 255, ()),
+        ("Min Delay", 1, 255, ()),
+        ("Feedback", -127, 127, ()),
+    ),
+    (  # Phaser
+        ("LFO Rate", 0, 255, ()),
+        ("LFO Depth", 0, 255, ()),
+        ("Min Freq", 1, 255, ()),
+        ("Feedback", 0, 127, ()),
+    ),
+    (  # Stereo Chorus
+        ("LFO Rate", 0, 255, ()),
+        ("LFO Depth", 0, 255, ()),
+        ("Min Delay", 1, 255, ()),
+        ("Feedback", -127, 127, ()),
+    ),
+    (  # Delay
+        ("L Delay Time", 1, 255, ()),
+        ("L Tap Level", 0, 127, ()),
+        ("R Delay Time", 1, 255, ()),
+        ("R Tap Level", 0, 127, ()),
+    ),
+    (  # Cross Delay
+        ("R Delay Time", 1, 255, ()),
+        ("R Tap Level", 0, 127, ()),
+        ("L Delay Time", 1, 255, ()),
+        ("L Tap Level", 0, 127, ()),
+    ),
+    (  # Echo
+        ("L Delay Time", 1, 255, ()),
+        ("L Tap Level", 0, 127, ()),
+        ("R Delay Time", 0, 255, ()),
+        ("R Tap Level", 0, 127, ()),
+        ("Feedback", 0, 255, ()),
+    ),
+)
+
+_FX_B_PARAMS: tuple[tuple[tuple[str, int, int, tuple[str, ...]], ...], ...] = (
+    (),  # No Effect
+    (  # Fuzz
+        ("Input Filter", 0, 255, ()),
+        ("Output Filter", 0, 255, ()),
+        ("Output Volume", 0, 127, ()),
+    ),
+    (  # Fuzz Lite
+        ("Input Filter", 0, 255, ()),
+        ("Output Filter", 0, 255, ()),
+    ),
+    (  # Stereo Flanger
+        ("LFO Rate", 0, 255, ()),
+        ("LFO Depth", 0, 255, ()),
+        ("Min Delay", 1, 255, ()),
+        ("Feedback", -127, 127, ()),
+    ),
+    (  # Phaser
+        ("LFO Rate", 0, 255, ()),
+        ("LFO Depth", 0, 255, ()),
+        ("Min Freq", 1, 255, ()),
+        ("Feedback", 0, 127, ()),
+    ),
+    (  # Stereo Chorus
+        ("LFO Rate", 0, 255, ()),
+        ("LFO Depth", 0, 255, ()),
+        ("Min Delay", 1, 255, ()),
+        ("Feedback", -127, 127, ()),
+    ),
+    (  # Delay
+        ("L Delay Time", 1, 255, ()),
+        ("L Tap Level", 0, 127, ()),
+        ("R Delay Time", 1, 255, ()),
+        ("R Tap Level", 0, 127, ()),
+    ),
+    (  # Cross Delay
+        ("R Delay Time", 1, 255, ()),
+        ("R Tap Level", 0, 127, ()),
+        ("L Delay Time", 1, 255, ()),
+        ("L Tap Level", 0, 127, ()),
+    ),
+    (),  # Ring Modulate: manual names no parameters
+)
+
+# The wire effect IDs (from the EFFECT LIST) that the unit actually stores for
+# each UI index, kept here as facts for interpreting a stored midimap.
+_FX_A_IDS: tuple[int, ...] = (
+    0,
+    1,
+    2,
+    16,
+    17,
+    7,
+    8,
+    18,
+    5,
+    6,
+    3,
+    4,
+    19,
+    20,
+    21,
+    22,
+    24,
+    23,
+    25,
+    11,
+    13,
+    12,
+    9,
+    10,
+    14,
+)
+
+_FX_B_IDS: tuple[int, ...] = (128, 132, 138, 130, 133, 131, 134, 135, 129)
+
+_FX_PARAM_FALLBACK: tuple[tuple[str, int, int, tuple[str, ...]], ...] = (
+    ("Parm 1", -8192, 8191, ()),
+)
+
+FX_PARAMS: dict[object, tuple[tuple[str, int, int, tuple[str, ...]], ...]] = {}
+
+
+def _register_fx_params(
+    names: Sequence[str],
+    params: Sequence[Sequence[tuple[str, int, int, tuple[str, ...]]]],
+    register_indices: bool = True,
+) -> None:
+    for index, (name, param_tuple) in enumerate(
+        zip(names, params, strict=True)
+    ):
+        params_tuple = tuple(param_tuple)
+        FX_PARAMS[name] = params_tuple
+        if register_indices:
+            FX_PARAMS[index] = params_tuple
+
+
+_register_fx_params(_FX_A_NAMES, _FX_A_PARAMS, register_indices=True)
+# B types keep their own positions displaced so A and B do not collide; for
+# B effects, look them up by name instead.
+for _name, _param_tuple in zip(_FX_B_NAMES, _FX_B_PARAMS, strict=True):
+    FX_PARAMS[_name] = tuple(_param_tuple)
+
+
+def fx_params(
+    type_value: object,
+) -> tuple[tuple[str, int, int, tuple[str, ...]], ...]:
+    "Parameters the given effect type defines."
+    if isinstance(type_value, str):
+        key: object = type_value
+    elif isinstance(type_value, int):
+        key = type_value
+    else:
+        try:
+            key = int(str(type_value))
+        except (TypeError, ValueError):
+            key = type_value
+    if key in FX_PARAMS:
+        return FX_PARAMS[key]
+    # wire id -> ui index fallback already handled by registered ids; failing
+    # that, try a positional interpretation
+    if isinstance(key, int):
+        for _names, params in (
+            (_FX_A_NAMES, _FX_A_PARAMS),
+            (_FX_B_NAMES, _FX_B_PARAMS),
+        ):
+            if 0 <= key < len(params):
+                return tuple(params[key])
+    return _FX_PARAM_FALLBACK
+
 
 _PAN: tuple[str, ...] = (
     "Preset",
@@ -178,9 +421,11 @@ _entries.append(
         333,
         "FX A Type",
         0,
-        16383,
-        (),
-        _PARAM_MANUAL + "; effect IDs are not indices (EFFECT LIST)",
+        len(_FX_A_NAMES) - 1,
+        _FX_A_NAMES,
+        _PARAM_MANUAL
+        + "; EFFECTS TYPES (manual pp. 41-52); "
+        + "base 0 = No Effect (manual's first A type is Room at 1)",
     )
 )
 for _i in range(10):
@@ -191,7 +436,9 @@ for _i in range(10):
             -8192,
             8191,
             (),
-            _PARAM_MANUAL + "; one of ten effect parameter words",
+            _PARAM_MANUAL
+            + "; one of ten effect parameter words "
+            + "(see fx_params for the selected type)",
         )
     )
 _entries.append(
@@ -199,9 +446,9 @@ _entries.append(
         344,
         "FX B Type",
         0,
-        16383,
-        (),
-        _PARAM_MANUAL + "; effect IDs are not indices (EFFECT LIST)",
+        len(_FX_B_NAMES) - 1,
+        _FX_B_NAMES,
+        _PARAM_MANUAL + "; EFFECT TYPES (manual p. 53); base 0 = No Effect",
     )
 )
 for _i in range(10):
@@ -288,3 +535,34 @@ def spell(param: Param, value: int) -> str:
         if 0 <= index < len(param.choices):
             return param.choices[index]
     return str(signed_value)
+
+
+def name_of(words: Sequence[int]) -> str:
+    """The twelve-character Midimap name held in ``words``' first twelve."""
+    return m.decode_name(words)
+
+
+_ASCII_SPACE = 32
+
+
+def set_name(words: Sequence[int], text: str) -> list[int]:
+    """Return a NEW word list with the first twelve words spelling ``text``.
+
+    ``text`` is padded with spaces or truncated to twelve characters. Every
+    character must lie in ASCII 32-127; a character outside that range is
+    refused with a message naming the range. The input is never mutated.
+    """
+    if len(text) > _NAME_WORDS:
+        text = text[:_NAME_WORDS]
+    padded = text.ljust(_NAME_WORDS)
+    # Validate every character before touching the copy.
+    for char in padded:
+        code = ord(char)
+        if code < _ASCII_FIRST or code >= _ASCII_LAST:
+            raise ValueError(f"{char!r} is outside ASCII 32-127")
+    new = list(words)
+    if len(new) < _NAME_WORDS:
+        new.extend([_ASCII_SPACE] * (_NAME_WORDS - len(new)))
+    for index, char in enumerate(padded):
+        new[index] = ord(char)
+    return new
