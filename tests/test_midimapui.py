@@ -347,5 +347,127 @@ async def test_no_prompt_title_only_value() -> None:
             assert title != "value (0-5)" and not title.startswith("value (")
 
 
+@pytest.mark.asyncio
+async def test_header_and_cell_order_agree() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        assert list(table.columns) == [
+            "offset",
+            "section",
+            "label",
+            "value",
+            "range",
+        ]
+        row = table.get_row_at(0)
+        assert list(row) == [
+            "name",
+            "Name",
+            "Midimap Name",
+            "TESTNAME1234",
+            "32-127",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_typedef_picker_returns_id_not_index() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        calls: list[tuple[int, int]] = []
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        params = _full_params()
+        params[333] = 0
+        screen = MidimapEditScreen(
+            editor, params, on_edit=lambda o, v: calls.append((o, v))
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+        ordered = screen._ordered
+        index = ordered.index(333)
+        table = screen.query_one("#midimap-table", DataTable)
+        table.move_cursor(row=index, column=3)
+        await pilot.pause()
+
+        def fake_push(scr: Any, callback: Any = None) -> None:
+            if callback is not None:
+                callback(3)
+
+        app.push_screen = fake_push  # type: ignore[assignment]
+        screen.action_edit_current()
+        await pilot.pause()
+        assert (333, 16) in calls
+
+
+@pytest.mark.asyncio
+async def test_fx_parm_rows_relabel_after_type_change() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        screen.result(True, "", parameter_id=333, value=11)
+        await pilot.pause()
+        assert screen._label_of(334) == "LFO Rate"
+        table = screen.query_one("#midimap-table", DataTable)
+        row = table.get_row_at(table.get_row_index("334"))
+        assert row[2] == "LFO Rate"
+
+
+@pytest.mark.asyncio
+async def test_name_nudge_does_nothing() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        calls: list[tuple[int, int]] = []
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(
+            editor, _full_params(), on_edit=lambda o, v: calls.append((o, v))
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+        screen.action_go_name()
+        await pilot.pause()
+        screen.action_nudge_up()
+        await pilot.pause()
+        screen.action_nudge_down()
+        await pilot.pause()
+        assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_jump_keys_via_pilot() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+
+        await pilot.press("h")
+        await pilot.pause()
+        assert "Name" in _status(screen)
+
+        await pilot.press("x")
+        await pilot.pause()
+        assert "Global / Effects" in _status(screen)
+
+        await pilot.press("n")
+        await pilot.pause()
+        # after effects, n wraps? just ensure status changes
+        await pilot.press("h")
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert "Channel 1" in _status(screen)
+
+        await pilot.press("p")
+        await pilot.pause()
+        assert "Name" in _status(screen)
+
+
 if __name__ == "__main__":
     pass

@@ -36,6 +36,12 @@ _ASCII_LAST = 128
 _CHANNEL_STRIDE = 20
 _CHANNEL_BASE = 12
 _GLOBAL_BASE = 332  # 12 + 16 * 20; boundaries in PARAMS
+_FX_A_TYPE_OFFSET = 333
+_FX_A_PARM_FIRST = 334
+_FX_A_PARM_LAST = 343
+_FX_B_TYPE_OFFSET = 344
+_FX_B_PARM_FIRST = 345
+_FX_B_PARM_LAST = 354
 
 
 class MidimapEditScreen(ModalScreen[None]):
@@ -156,6 +162,30 @@ class MidimapEditScreen(ModalScreen[None]):
     def _label_of(self, row: Any) -> str:
         if row == "name":
             return "Midimap Name"
+        off = int(row) if row != "name" else -1
+        # FX parameter rows are labelled by the selected effect type.
+        if _FX_A_PARM_FIRST <= off <= _FX_A_PARM_LAST:
+            type_value = self._values.get(333, None)
+            if type_value is None:
+                try:
+                    type_value = mm.param_at(_FX_A_TYPE_OFFSET).low
+                except Exception:
+                    type_value = 0
+            params = mm.fx_params_for(type_value)
+            index = off - _FX_A_PARM_FIRST
+            if 0 <= index < len(params):
+                return params[index][0]
+        if _FX_B_PARM_FIRST <= off <= _FX_B_PARM_LAST:
+            type_value = self._values.get(_FX_B_TYPE_OFFSET, None)
+            if type_value is None:
+                try:
+                    type_value = mm.param_at(_FX_B_TYPE_OFFSET).low
+                except Exception:
+                    type_value = 128
+            params = mm.fx_params_for(type_value)
+            index = off - _FX_B_PARM_FIRST
+            if 0 <= index < len(params):
+                return params[index][0]
         param = self._param_of(row)
         return getattr(param, "label", f"offset {row}")
 
@@ -230,7 +260,7 @@ class MidimapEditScreen(ModalScreen[None]):
                 key=key,
             )
         if table.row_count:
-            table.move_cursor(row=0, column=2)
+            table.move_cursor(row=0, column=3)
 
     def _current_row(self) -> Any | None:
         if not self._ordered:
@@ -327,10 +357,10 @@ class MidimapEditScreen(ModalScreen[None]):
     def on_mount(self) -> None:
         table = self.query_one("#midimap-table", DataTable)
         table.add_column("offset", key="offset")
+        table.add_column("section", key="section")
         table.add_column("label", key="label")
         table.add_column("value", key="value")
         table.add_column("range", key="range")
-        table.add_column("section", key="section")
         self._refresh_table()
         self._update_status()
 
@@ -353,30 +383,61 @@ class MidimapEditScreen(ModalScreen[None]):
     ) -> None:
         if ok:
             off = parameter_id if parameter_id is not None else offset
+            # Single-value update (usual case, scratch re-read path).
             if off is not None and value is not None:
                 self._values[off] = value
-                row_is_name = (
+
+                # Make sure the name row exists once a name char arrives.
+                if (
                     isinstance(off, int)
                     and 0 <= off < _NAME_WORDS
-                    and "name" in self._all_rows
-                )
-                row: Any = "name" if row_is_name else off
+                    and "name" not in self._all_rows
+                ):
+                    self._build_rows()
+                    self._ordered = self._visible_rows()
+                    self._refresh_table()
+
                 try:
                     table = self.query_one("#midimap-table", DataTable)
+                except Exception:
+                    table = None
+                if table is not None:
                     with contextlib.suppress(Exception):
-                        mm.param_at(int(off)) if isinstance(off, int) else None
-                    if row == "name":
-                        spelled = self._name_text()
-                    else:
-                        spelled = self._spell(int(off), value)
-                    with contextlib.suppress(Exception):
-                        key = "name" if row == "name" else str(row)
-                        table.update_cell(key, "value", spelled)
-                except Exception:  # noqa: S110
-                    pass
-                self._build_rows()
-                self._ordered = self._visible_rows()
-                self._refresh_table()
+                        row_key = (
+                            "name"
+                            if isinstance(off, int) and 0 <= off < _NAME_WORDS
+                            else str(off)
+                        )
+                        if row_key == "name":
+                            table.update_cell(
+                                "name", "value", self._name_text()
+                            )
+                        else:
+                            with contextlib.suppress(Exception):
+                                spelled = self._spell(int(off), value)
+                            table.update_cell(row_key, "value", spelled)
+
+                    # Re-label the FX parameter rows when a type changes.
+                    if isinstance(off, int) and off in (
+                        _FX_A_TYPE_OFFSET,
+                        _FX_B_TYPE_OFFSET,
+                    ):
+                        base = (
+                            _FX_A_PARM_FIRST
+                            if off == _FX_A_TYPE_OFFSET
+                            else _FX_B_PARM_FIRST
+                        )
+                        for index in range(10):
+                            row_off = base + index
+                            row_key = str(row_off)
+                            with contextlib.suppress(Exception):
+                                table.update_cell(
+                                    row_key, "label", self._label_of(row_off)
+                                )
+                            # also refresh their value cell is unnecessary
+                # keep filters/rows consistent without a full table rebuild
+                if "name" in self._all_rows and self._filter:
+                    self._ordered = self._visible_rows()
         self.say(message, refused=not ok)
 
     def _report(self) -> str:
@@ -406,47 +467,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if row is None:
             return
         if row == "name":
-            # The name is one field, but a nudge keeps the legacy
-            # per-character behaviour for the first character so callers that
-            # still wire only on_edit keep working.
-            off = 0
-            param = None
-            try:
-                param = mm.param_at(0)
-            except Exception:
-                param = None
-            if param is None:
-                return
-            current = self._values.get(off, param.low)
-            current = max(current, param.low)
-            if by > 0:
-                value = min(param.high, current + by)
-            else:
-                value = max(param.low, current + by)
-            refusal = None
-            try:
-                refusal = getattr(self._editor, "allow", lambda _o, _v: None)(
-                    off, value
-                )
-            except Exception:
-                refusal = None
-            if refusal is not None:
-                with contextlib.suppress(Exception):
-                    refusal = self._editor.gate.refuse() or refusal
-                self.say(refusal, refused=True)
-                return
-            self._values[off] = value
-            if self._on_edit is not None:
-                self._on_edit(off, value)
-            self._refresh_table()
-            new_idx = self._index_of_row("name")
-            if new_idx is not None:
-                try:
-                    table = self.query_one("#midimap-table", DataTable)
-                    table.move_cursor(row=new_idx, column=2)
-                except Exception:  # noqa: S110
-                    pass
-            self._update_status()
+            self.say("the name is edited as text -- press enter")
             return
         off = int(row)
         param = None
@@ -462,13 +483,17 @@ class MidimapEditScreen(ModalScreen[None]):
         # choices step through list
         has_choices = param is not None and bool(param.choices)
         if has_choices:
-            low = getattr(param, "low", 0)
-            idx = current - low
+            pairs = list(mm.choices_for(param))
+            values = [v for v, _ in pairs]
+            try:
+                idx = values.index(current)
+            except ValueError:
+                idx = 0
             if by > 0:
-                idx = (idx + 1) % len(param.choices)
+                idx = (idx + 1) % len(values)
             else:
-                idx = (idx - 1) % len(param.choices)
-            value = low + idx
+                idx = (idx - 1) % len(values)
+            value = values[idx]
         else:
             low = getattr(param, "low", 0)
             high = getattr(param, "high", 0)
@@ -497,7 +522,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if new_idx is not None:
             try:
                 table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=new_idx, column=2)
+                table.move_cursor(row=new_idx, column=3)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -528,14 +553,20 @@ class MidimapEditScreen(ModalScreen[None]):
         except Exception:
             param = None
         if param is not None and param.choices:
-            choices = list(param.choices)
+            pairs = list(mm.choices_for(param))
+            labels = [label for _value, label in pairs]
+            values = [value for value, _label in pairs]
             current_val = self._values.get(off, param.low)
-            idx = max(0, min(len(choices) - 1, current_val - param.low))
+            try:
+                idx = values.index(current_val)
+            except ValueError:
+                idx = 0
+            idx = max(0, min(len(labels) - 1, idx))
 
             def picked(chosen: int | None) -> None:
                 if chosen is None:
                     return
-                value = param.low + chosen
+                value = values[chosen]
                 refusal = None
                 try:
                     refusal = self._editor.allow(off, value)
@@ -552,13 +583,13 @@ class MidimapEditScreen(ModalScreen[None]):
                 if new_idx is not None:
                     try:
                         table = self.query_one("#midimap-table", DataTable)
-                        table.move_cursor(row=new_idx, column=2)
+                        table.move_cursor(row=new_idx, column=3)
                     except Exception:  # noqa: S110
                         pass
                 self._update_status()
 
             self.app.push_screen(
-                ChoiceScreen(param.label, choices, current=idx), picked
+                ChoiceScreen(param.label, labels, current=idx), picked
             )
         else:
             param_low = getattr(param, "low", 0) if param else 0
@@ -589,7 +620,7 @@ class MidimapEditScreen(ModalScreen[None]):
                 if new_idx is not None:
                     try:
                         table = self.query_one("#midimap-table", DataTable)
-                        table.move_cursor(row=new_idx, column=2)
+                        table.move_cursor(row=new_idx, column=3)
                     except Exception:  # noqa: S110
                         pass
                 self._update_status()
@@ -626,7 +657,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if idx is not None:
             try:
                 table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=idx, column=2)
+                table.move_cursor(row=idx, column=3)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -642,7 +673,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if target is not None:
             try:
                 table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=target, column=2)
+                table.move_cursor(row=target, column=3)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -682,7 +713,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if next_bound is not None:
             try:
                 t = self.query_one("#midimap-table", DataTable)
-                t.move_cursor(row=next_bound, column=2)
+                t.move_cursor(row=next_bound, column=3)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -721,7 +752,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if prev_bound is not None:
             try:
                 t = self.query_one("#midimap-table", DataTable)
-                t.move_cursor(row=prev_bound, column=2)
+                t.move_cursor(row=prev_bound, column=3)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -804,7 +835,7 @@ class MidimapEditScreen(ModalScreen[None]):
             if new_idx is not None:
                 try:
                     table = self.query_one("#midimap-table", DataTable)
-                    table.move_cursor(row=new_idx, column=2)
+                    table.move_cursor(row=new_idx, column=3)
                 except Exception:  # noqa: S110
                     pass
             self._update_status()
