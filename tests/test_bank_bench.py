@@ -10,12 +10,15 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import os
 import sys
 from typing import Any
 
 import pytest
+
+from emu import config as cfg
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _TOOL = os.path.join(os.path.dirname(_HERE), "tools", "bench_bank_numbers.py")
@@ -89,4 +92,22 @@ def test_sweep_offers_the_option_and_reports_channels() -> None:
     # Channel 3 (display) is zero-based 2 on the wire.
     assert bench.bank_select_bytes(0, 0, 2) == bytes(
         [0xB0 | 2, 0, 0, 0xB0 | 2, 0x20, 0, 0xC0 | 2, 0]
+    )
+
+
+def test_resolve_channel_matches_the_app(tmp_path: Any) -> None:
+    """The stored channel is zero-based; --channel is 1-16.
+
+    The 2026-10-16 run sent on display channel 6 with channel = 6 stored
+    (display 7) and every candidate was ignored. Pin both directions.
+    """
+    path = str(tmp_path / "config.toml")
+    stored_wire = 6  # zero-based in the file = display channel 7
+    cfg.save_channel(stored_wire, path)
+    assert bench.resolve_channel(argparse.Namespace(channel=None), path) == (
+        stored_wire
+    )
+    # --channel is 1-16 on the command line, so the same wire channel is 7.
+    assert bench.resolve_channel(argparse.Namespace(channel=7), path) == (
+        stored_wire
     )

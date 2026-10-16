@@ -196,7 +196,7 @@ results_table = format_results
 render_results = format_results
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
+def main(argv: list[str] | None = None) -> int:  # noqa: C901
     parser = vcli.make_parser(
         "bench-bank-numbers",
         "Play a Morpheus to settle which Bank Select bank number reaches "
@@ -234,16 +234,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
 
     config_path = getattr(args, "config", None) or emu_config.DEFAULT_PATH
 
-    if isinstance(args.channel, int):
-        channel = args.channel - 1
-    else:
-        loaded = emu_config.load_channel(config_path)
-        if isinstance(loaded, int) and 1 <= loaded <= 16:  # noqa: PLR2004
-            channel = loaded - 1
-        else:
-            channel = 0
-    if not 0 <= channel <= 15:  # noqa: PLR2004
-        channel = 0
+    channel = resolve_channel(args, config_path)
 
     device_id = args.device_id if args.device_id is not None else 0
     if not 0 <= device_id <= 15:  # noqa: PLR2004
@@ -312,6 +303,24 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
         bridge.close()
 
     return 0
+
+
+def resolve_channel(args: Any, config_path: str) -> int:
+    """The 0-based channel to send on, the family's way.
+
+    ``--channel`` is 1-16 on every command line in this family and 0-based
+    on the wire; the stored value is already zero-based. This used to be a
+    fourth copy of that arithmetic, and it was wrong: it subtracted one from
+    the stored value, so with ``channel = 6`` in config.toml (display
+    channel 7) it sent on display channel 6 and every Bank Select + Program
+    Change on 2026-10-16 was silently ignored -- the instrument plays
+    nothing and reports no error. ``vinsynlib.cli.channel_of`` is the one
+    implementation; this asks it.
+    """
+    value = vcli.channel_of(args, default=emu_config.load_channel(config_path))
+    if value is None or not 0 <= value <= 15:  # noqa: PLR2004
+        return 0
+    return value
 
 
 def _sweep_channels(
