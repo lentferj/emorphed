@@ -235,15 +235,39 @@ tags, notes, search, device info. Morpheus-specific:
   of them, restoring previous values. The undo log is the favourites store's
   log, not a separate buffer.
 - **Editing a midimap.** `m` opens the current midimap's own parameters in a
-  modal: one row per word, `+`/`-` to nudge, digits to type, `⏎` to pick a
-  named value from an enumeration, `r` to re-read. Writes are **gated**: the
-  gate is locked by default, `w` arms it (and `--allow-write` arms only the
-  *start* state), and a locked gate refuses rather than sends. The **first**
-  write backs the whole midimap up first -- a failed backup is announced and
-  the parameter write still proceeds; only the STORE refuses without a
-  successful backup this session;
-  every write is read back, and only an agreed read-back is logged for `z`/`Z`
-  undo. `s` is the **store** -- sending the whole map to a location -- and is
+  modal. The map's 360 words are grouped into its sections -- **Name**,
+  **Channel 1** … **Channel 16**, and **Global / Effects** -- and every row
+  shows its offset, its section, the parameter label, the value and the
+  allowed range. The status line shows the row counter, the section and the
+  current parameter; `n`/`p` jump to the next/previous section, `h` to the
+  Name row, `x` straight to Global / Effects, and `/` filters the visible rows
+  by label. `⏎` opens the prompt the row kind deserves: a **named picker** for
+  an enumerated parameter (Ch. Bank, Ch. Mix Bus, FX A Type, …), a **labelled
+  prompt** `"<label>: <low>-<high> (now <value>)"` pre-filled with the current
+  value for a plain range, and one text prompt for the twelve-character
+  **Midimap Name** -- a single row here, not twelve. Digits type a number in
+  place for a plain range (the label and range show in the status line) and are
+  validated on `⏎`; `+`/`-` nudge, and a named value steps through its list.
+
+  Writes are **gated**: the gate is locked by default, `w` arms it (and
+  `--allow-write` arms only the *start* state), and a locked gate refuses
+  rather than sends. The **first** write backs the whole midimap up first -- a
+  failed backup is announced and the parameter write still proceeds; only the
+  STORE refuses without a successful backup this session. Every parameter
+  write is read back, and only an agreed read-back is logged for `z`/`Z`
+  undo. The **name** is written as twelve parameter writes to the same scratch
+  map, each read back, and **one `z` restores the whole previous name**.
+
+  `r` re-reads the unit's **scratch** midimap -- the live map a parameter
+  write edits, *not* the stored dump. The manual says how (p.232): "The
+  scratch map is accessed by requesting MASTER settings or individual
+  parameter requests." So a re-read is **360 individual Parameter Requests**,
+  one per parameter -- **360 round trips on the wire** (a few seconds at
+  typical latency, up to 360 × the short probe timeout in the worst case).
+  That cost is why it is a deliberate keystroke and not a refresh after every
+  edit; a parameter that stays silent keeps the value already on screen.
+
+  `s` is the **store** -- sending the whole map to a location -- and is
   **arm-then-fire**: it asks for a location, says what it erases, and waits
   for a confirmation, and it is refused outright without a backup. What a
   parameter write changes is the unit's *scratch* midimap, live; only a store
@@ -337,10 +361,21 @@ was settled separately, by the human-attended
   `select` is the only emitter and plays a preset, and `restore` is not
   offered. Midimap *parameters* can be written, but only behind the gate,
   after a backup and with a read-back (TODO item 6).
+- **A parameter write is not a save.** It changes the unit's *scratch*
+  midimap -- what it is using right now -- and not a stored location. Only the
+  store writes a stored map, and nothing here calls a parameter write saved.
 - **A midimap store is destructive and fenced.** Sending a whole midimap to
   a location erases what is there (manual p.36). It is arm-then-fire, names
   the location, needs a confirmation and a backup first -- and it is
   unverified on hardware, as is the whole write path.
+- **The effect types are transcribed, not guessed.** FX A carries 25 named
+  types (including "No Effect") and FX B 9, each with the parameters the
+  manual's effect section gives it. Where the manual does not break a type
+  down -- "Ring Modulate" and "No Effect" -- the editor shows generic
+  parameters rather than inventing names (TODO item 6).
+- **A rename is twelve writes, not one.** The name is written as twelve
+  parameter writes with a read-back each, not as a single name message
+  (TODO item 6).
 - **No category filter.** The Morpheus printed catalog carries no categories;
   there is nothing to filter on.
 - **`PRESET_GAP` is a guess** (TODO item 3), labelled as one; the bench

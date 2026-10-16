@@ -236,11 +236,46 @@ whole midimap up (`emu/backup.py`, kind/block "midimap"); a failed backup
 is announced and the parameter write still proceeds, and only the STORE
 refuses without a successful backup this session. Every write is read back
 and **only an agreed
-read-back is logged**, and `z`/`Z` undo through the UndoLog. The store --
-sending a whole `0x47` dump to a location -- is the one destructive step
-and is **arm-then-fire**: it names the location, states that it erases
-what is there, needs a confirmation, and is refused outright without a
-successful backup this session (manual p.36).
+read-back is logged**, and `z`/`Z` undo through the UndoLog.
+
+**The editor's real surface.** The 360 words are grouped into the map's
+sections -- **Name**, **Channel 1** … **Channel 16**, **Global / Effects** --
+and every row shows its offset, section, label, value and allowed range; the
+status line carries the row counter, the section, and the current parameter
+with its value. `n`/`p` jump to the next/previous section, `h` to the Name
+row, `x` straight to Global / Effects, and `/` filters the visible rows by
+label. `⏎` opens the prompt the row kind deserves: a **named picker** for an
+enumerated parameter (Ch. Bank, Ch. Mix Bus, FX A Type, …); a **labelled**
+prompt `"<label>: <low>-<high> (now <value>)"` pre-filled with the current
+value for a plain range; and one text prompt for the twelve-character
+**Midimap Name**, which is a single row here rather than twelve. Digits type a
+number in place for a plain range (label and range in the status line) and are
+validated on `⏎`; `+`/`-` nudge, and a named value steps through its list.
+
+**The name is a field, written as twelve parameters.** Offsets 0-11 are the
+twelve ASCII characters (32-127); the editor presents them as one
+"Midimap Name" row, its `⏎` a text prompt. The write is **twelve parameter
+writes with a read-back each** (reporting agreement, 12/12), and **one `z`
+restores the whole previous name** (a single `NameChange` record, not twelve).
+
+**The `r` re-read is the scratch map, and it costs 360 requests.** A parameter
+write edits the unit's **scratch** midimap; the stored map is a different
+thing, so re-reading the stored dump would look like a revert. The manual
+(p.232) says "The scratch map is accessed by requesting MASTER settings or
+individual parameter requests," so `r` sends **360 Parameter Requests** -- one
+per parameter -- against the scratch. That is the cost, stated in the
+interface, and a parameter that stays silent keeps the value already on
+screen.
+
+The **current-midimap index** comes from `bridge.current_midimap`, which only
+*selecting* a midimap sets; a read does not make a map current. When nothing
+has selected one this session the index is **assumed** (0) and the screen says
+so.
+
+The store -- sending a whole `0x47` dump to a location -- is the one
+destructive step and is **arm-then-fire**: it names the location, states that
+it erases what is there, needs a confirmation, and is refused outright without
+a successful backup this session (manual p.36).
 
 **Presets still cannot be written.** Preset Data sent *to* the unit would
 replace a preset, and nothing in emorphed sends it; presets are read,
@@ -257,17 +292,28 @@ edit buffer per kind which is erased by changing which object is current
 
 **What remains open:**
 
-* **The store is unverified on hardware.** Nothing has been written to a
-  real unit; the whole path is synthetic until the bench runs.
+* **The store is unverified on hardware.** The STORE half -- sending a whole
+  `0x47` dump to a location -- has never been exercised against a real unit.
+  The parameter-*write* half has (next bullet), but the store is the
+  destructive step and is the one still unproven.
 * **Midimap parameter writes are verified on the unit (2026-10-16)**: the
   bench wrote channel-1 volume 127 -> 126, read it back through a
   Parameter Request (the scratch map, manual p.232) and restored it. It
   found a real bug on the way: the read-back had been re-reading the
   *stored* dump. The STORE half is still unverified.
-* **The human-attended write bench** (`tools/bench_midimap_write.py`) has
-  not been run: back up a midimap, change one benign parameter (a channel
-  volume), read it back and verify, restore the backup. It refuses without
-  `--yes` and a TTY, and no agent runs it.
+* **Effect types the manual does not break down.** FX A's 25 types and FX B's
+  9 are named, each with the per-type parameter table the manual gives it;
+  where the manual gives a type no parameters -- "Ring Modulate" (FX B) and
+  "No Effect" (both) -- the editor shows generic parameters (`Parm 1`) rather
+  than inventing names.
+* **The name write is twelve writes rather than one.** Renaming sends twelve
+  parameter writes (one per character, offsets 0-11) and reads each back; a
+  single documented name message would be one frame, if the manual offers one.
+* **The human-attended write bench** (`tools/bench_midimap_write.py`) proved
+  the parameter-write path on 2026-10-16 (previous bullet). It does not cover
+  the store: back up a midimap, change one benign parameter, read it back,
+  restore the backup, then store -- the store step is what is still unrun. It
+  refuses without `--yes` and a TTY, and no agent runs it.
 
 ## 7. The MidiQuest `.sqs` format is unread — shared across the projects
 

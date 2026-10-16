@@ -110,19 +110,36 @@ each rule below is a rule, not a suggestion:
   midimap into the backup envelope (`emu/backup.py`, kind/block "midimap");
   a failed backup is announced and the parameter write still proceeds --
   only the STORE refuses without a successful backup this session.
-- **Every write is read back.** No per-parameter read is documented, so the
-  read-back re-reads the owning map -- one 730-byte reply each time. **Only
-  an agreed read-back is logged**; a value that did not take is reported and
-  not recorded for undo.
+- **Every write is read back.** A parameter read *is* documented: the unit
+  answers a Parameter Request (0x02) with the parameter's live value, so the
+  read-back is one small frame, not a whole 730-byte dump. **Only an agreed
+  read-back is logged**; a value that did not take is reported and not
+  recorded for undo.
 - **The store is named and confirmed.** Sending a whole midimap to a
   location is the one destructive step: it erases what is there (manual
   p.36). It goes **arm-then-fire** -- ask for the location, say what is
   erased, wait for a confirmation -- and it is refused outright without a
   successful backup this session.
 - **Scratch versus stored.** A parameter write edits the unit's **scratch**
-  midimap: live, not permanent. Only a **store** makes an edit part of a
-  stored location, and loading a stored map into the current location
-  reloads the scratch map from it. Never describe a parameter write as saved.
+  midimap: the value it is using right now, live, not permanent. Only a
+  **store** makes an edit part of a stored location, and loading a stored map
+  into the current location reloads the scratch map from it. Never describe a
+  parameter write as saved. The editor's `r` re-reads the **scratch**, not the
+  stored dump, because that is where a write lands: the manual's sentence
+  (p.232) is "The scratch map is accessed by requesting MASTER settings or
+  individual parameter requests," and there is no scratch *dump* message, so a
+  re-read is **360 Parameter Requests** -- one per parameter, offsets 0-359.
+  Say the cost in the interface; a value that stays silent keeps what is on
+  screen rather than becoming a zero.
+- **Say it when you are assuming.** The current-midimap index comes from
+  `bridge.current_midimap`, which only **selecting** a midimap sets; a midimap
+  read (0x46/0x47) does **not** make a map current on the unit. When nothing
+  has selected one this session the index is **assumed** (0) and the editor
+  must say "assumed" rather than present a guess as the live map.
+- **Never invent a parameter name.** The effect types and their parameters are
+  transcribed from the manual (FX A: 25 types, FX B: 9). Where the manual does
+  not break a type down -- "Ring Modulate" and "No Effect" -- the editor shows
+  generic parameters; it does not name one it cannot cite.
 - **One session drives the unit.** The write path is human-attended on
   hardware: the bench that proves it (`tools/bench_midimap_write.py`) refuses
   without `--yes` and a TTY, and no agent runs it. Develop and test

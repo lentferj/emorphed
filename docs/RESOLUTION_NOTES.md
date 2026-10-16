@@ -633,3 +633,60 @@ scratch map from it. So the editor guards the safe route -- parameter
 writes, one value at a time, each read back -- and keeps the store as a
 separate, destructive action behind a named confirmation and a backup
 taken first.
+
+## 23. The midimap editor flaw-fix wave: named effects, a named prompt, and the scratch re-read (2026-10-16)
+
+**Source: the code, read at its site** (`emu/midimap.py`,
+`emorphed/midimapui.py`, `emorphed/app.py`, `emu/bridge.py`) **and the
+manual pages the code cites.** Three commits, one theme: stop the editor
+from saying things the unit does not.
+
+**The reported "value (32-127)" was the name rows.** The editor's `⏎`
+prompt for a plain range used to be `f"value ({low}-{high}):"`. The twelve
+name characters (offsets 0-11) were each its own one-character parameter
+with range **32-127**, so pressing `⏎` on any of them produced the
+unlabelled prompt `value (32-127)` -- a range with no parameter name
+attached. The fix (`f275727`) makes the twelve characters **one "Midimap
+Name" row** whose `⏎` is a text prompt, and gives every range row a
+**labelled** prompt of the form `"<label>: <low>-<high> (now <value>)"`,
+pre-filled with the current value. The range a name character carries is
+still 32-127 (`set_name` refuses a character outside it), but it is now
+said as a name field, not as a bare number.
+
+**The effect types are named, and the names are the manual's.** `emu/midimap.py`
+now carries `_FX_A_NAMES` (**25** types, including "No Effect") and
+`_FX_B_NAMES` (**9**, including "No Effect" and "Ring Modulate"), with a
+per-type parameter table in `fx_params`. The names and their order come
+from the manual's effects section -- **pp. 41-53**: the A types from the
+pages through the examples at **pp. 42-52** (the `FX A Type` parameter note
+in the code reads "manual pp. 41-52") and the B set at **p. 53** (the
+`FX B Type` note reads "manual p. 53"). Where the manual breaks a type
+down, the parameters are its; where it does not -- "Ring Modulate" and
+"No Effect" -- the table is empty and `fx_params` returns the generic
+fallback (`("Parm 1", -8192, 8191)`). **No parameter name is invented.**
+
+**The name is text on the wire.** `name_of`/`set_name` read and write the
+twelve words as ASCII **32-127**, pad-or-truncate to twelve; `set_name`
+refuses a character outside the range, naming it. This is the same field
+the manual prints as offset 0 "Midimap Name 12 chars" (pp. 233-234), now
+presented as one row rather than twelve.
+
+**The re-read was reading the wrong map.** The `r` re-read (inside the
+editor) used the stored `0x46/0x47` dump while a parameter *write* edits the
+**scratch** map, so editing and then re-reading looked like a revert. The
+manual's Midimap Request page (**p.232**) says it: "The scratch map is
+accessed by requesting MASTER settings or individual parameter requests."
+The re-read (`041ee7d`, `bridge.read_scratch_params`) is now **360
+Parameter Requests** -- one per parameter -- and the cost is stated in the
+interface ("re-read the scratch (360 parameter requests); N did not
+answer"), because there is no scratch dump message to make it cheaper. A
+parameter that stays silent keeps the value on screen.
+
+**The assumed index.** The current-midimap index comes from
+`bridge.current_midimap`, which only *selecting* a midimap sets (a read does
+not make a map current on the unit). With nothing selected this session the
+editor treats the index as **assumed** (0) and says so -- "midimap 0
+(assumed -- nothing selected this session)" -- rather than presenting a
+guess as the live map. The same wave writes the **name** through twelve
+parameter writes with a read-back each, as one `NameChange` record so a
+single `z` restores the whole previous name.
