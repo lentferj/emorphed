@@ -435,7 +435,14 @@ class MorpheusBridge:
         if len(body) < 4:  # noqa: PLR2004
             return None
         # body: pl pm vl vm (four byte halves, two fourteen-bit words).
-        # The first word should echo `param`; the value is the second.
+        echoed = body[0] | (body[1] << 7)
+        if echoed != param:
+            # A late reply to a different parameter request. `request`
+            # matches command and device only, and Parameter Data is the
+            # one command where the parameter number is the discriminator,
+            # so trusting the value here would answer for the wrong
+            # parameter.
+            return None
         return body[2] | (body[3] << 7)
 
     # --- the one thing that makes a sound ----------------------------------

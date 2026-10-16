@@ -487,3 +487,21 @@ class TestBridgeSendMidimap:
         dev.send_midimap(3, words)
         assert dev.midimap_stores == [(3, words)]
         assert dev.read_midimap(3) == words
+
+
+class TestReadParameterEcho:
+    """Parameter Data is the one reply whose discriminator is the
+    parameter number, not the command alone: ``request`` matches command
+    and device, so a late reply for a different parameter would otherwise
+    be read as this one's value.
+    """
+
+    def test_a_reply_echoing_another_parameter_is_not_this_value(self) -> None:
+        wrong = 2063
+        asked = 2062
+        bridge = b.MorpheusBridge(
+            _FakeIn([m.parameter_data(wrong, 5)]),
+            _FakeOut(),
+            device_id=0,
+        )
+        assert bridge.read_parameter(asked) is None
