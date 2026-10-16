@@ -36,6 +36,16 @@ class ScanOfferScreen(ModalScreen[ScanOffer]):
         ("n", "later", "Not now"),
         ("d", "never", "Don't ask again"),
         ("escape", "later", "Not now"),
+        # Arrows move between the buttons. Textual's own navigation is Tab
+        # and Shift+Tab only, which on a three-answer dialog reads as
+        # broken next to the rating filter's arrow-driven grid; Enter
+        # presses whichever button is focused. Up/down do the same as
+        # left/right because the row is one-dimensional and reaching for
+        # the wrong axis should not do nothing.
+        ("left", "previous_button", "Previous"),
+        ("up", "previous_button", "Previous"),
+        ("right", "next_button", "Next"),
+        ("down", "next_button", "Next"),
     ]
 
     def __init__(self, prompt: str = SCAN_OFFER) -> None:
@@ -61,6 +71,19 @@ class ScanOfferScreen(ModalScreen[ScanOffer]):
 
     def action_never(self) -> None:
         self.dismiss("never")
+
+    def action_next_button(self) -> None:
+        """Focus the next answer; wraps at the end."""
+        self.focus_next()
+
+    def action_previous_button(self) -> None:
+        """Focus the previous answer; wraps at the start."""
+        self.focus_previous()
+
+    def focused_answer(self) -> str | None:
+        """The id of the focused button, for the tests to assert on."""
+        focused = self.focused
+        return focused.id if focused is not None else None
 
 
 class ScanScreen(ModalScreen[None]):

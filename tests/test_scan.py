@@ -82,6 +82,65 @@ class TestOfferScreens:
     async def test_escape(self) -> None:
         assert await self._answer("escape") == ["later"]
 
+    async def test_arrows_move_between_the_buttons(self) -> None:
+        """Left/right (and up/down) walk the three answers.
+
+        Textual navigates focus with Tab only; the offer is the one screen
+        with buttons, and without these bindings it reads as broken next to
+        the rating filter, which moves with arrows.
+        """
+        seen: list[str | None] = []
+
+        class H(App[None]):
+            def on_mount(self) -> None:
+                self.push_screen(ScanOfferScreen())
+
+        app = H()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ScanOfferScreen)
+            seen.append(screen.focused_answer())  # the first answer
+            for key in ("right", "down", "right", "right", "left"):
+                await pilot.press(key)
+                seen.append(screen.focused_answer())
+
+        # scan -> later -> never, then wraps to the first, then back.
+        assert seen == ["scan", "later", "never", "scan", "later", "scan"]
+
+    async def test_enter_presses_the_focused_answer(self) -> None:
+        """Moving focus is only useful if Enter then answers with it."""
+        results: list[str] = []
+
+        class H(App[None]):
+            def on_mount(self) -> None:
+                self.push_screen(
+                    ScanOfferScreen(),
+                    lambda answer: results.append(answer or ""),
+                )
+
+        app = H()
+        async with app.run_test() as pilot:
+            await pilot.press("right")  # -> Not now
+            await pilot.press("enter")
+        assert results == ["later"]
+
+    async def test_tab_still_works(self) -> None:
+        """The arrows are an addition, not a replacement."""
+        results: list[str] = []
+
+        class H(App[None]):
+            def on_mount(self) -> None:
+                self.push_screen(
+                    ScanOfferScreen(),
+                    lambda answer: results.append(answer or ""),
+                )
+
+        app = H()
+        async with app.run_test() as pilot:
+            await pilot.press("tab")
+            await pilot.press("enter")
+        assert results == ["later"]
+
     async def test_prompt(self) -> None:
         assert "presets" in SCAN_OFFER
         assert "silent" in SCAN_OFFER
