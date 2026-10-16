@@ -107,8 +107,9 @@ each rule below is a rule, not a suggestion:
   the *start* state, not every write. A locked gate refuses rather than
   sends, and the refusal is said in the interface, not swallowed.
 - **Back up before the first write.** The first write reads the whole
-  midimap into the backup envelope (`emu/backup.py`, kind/block "midimap")
-  and refuses to proceed if that read fails.
+  midimap into the backup envelope (`emu/backup.py`, kind/block "midimap");
+  a failed backup is announced and the parameter write still proceeds --
+  only the STORE refuses without a successful backup this session.
 - **Every write is read back.** No per-parameter read is documented, so the
   read-back re-reads the owning map -- one 730-byte reply each time. **Only
   an agreed read-back is logged**; a value that did not take is reported and

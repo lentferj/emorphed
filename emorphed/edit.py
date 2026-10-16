@@ -14,7 +14,7 @@ edits the **scratch** midimap: it changes the value the unit is using
 right now but is not permanent. The **store** (``send_midimap``, 0x47)
 writes a whole midimap to a location and erases what was there (manual
 p.36); only that makes an edit stick, and loading a stored map into the
-current location reloads the scratch map from it (manual p.232). Hence
+current location reloads the scratch map from it (manual p.233). Hence
 this editor guards the safe route -- parameter writes one value at a time
 with a read-back -- while the store stays a separate, fenced action that a
 caller must take deliberately with a backup already in hand. A parameter

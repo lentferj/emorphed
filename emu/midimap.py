@@ -13,14 +13,14 @@
 A ``Midimap`` (command ``0x47``) carries 360 fourteen-bit words: a twelve-
 character name followed by twenty settings for each of sixteen channels and
 a twenty-eight-word global tail. Each word has its own meaning, printed as
-the ``Midimap Data`` table on pages 232-233 of the E-mu Morpheus Operator's
+the ``Midimap Data`` table on pages 233-234 of the E-mu Morpheus Operator's
 Manual (1993). Those meanings are transcribed here as :data:`PARAMS`, and
 checked against the parameter list in the sibling edisyn project
 (``EmuMorpheusMap.java``, ``parameters`` array, 360 entries).
 
 The parameter IDs a unit answers for these are ``PARAM_BASE`` (2048) through
 ``PARAM_BASE + 359`` (2407), printed on page 250 as "Midimap Vers. 1 Parms".
-A parameter *write* reaches the **scratch** midimap (manual p.232 says a
+A parameter *write* reaches the **scratch** midimap (manual p.233 says a
 map loaded into the current location is loaded into the scratch map, and
 permanence needs a store). This module is the read/parse/display side only;
 it does not write to the instrument.
@@ -44,7 +44,7 @@ __all__ = [
 ]
 
 
-_PARAM_MANUAL = "Morpheus Operation Manual p.232-233, Midimap Data"
+_PARAM_MANUAL = "Morpheus Operation Manual pp. 233-234, Midimap Data"
 
 _NAME_WORDS = m.NAME_CHARS
 _ASCII_FIRST = 32

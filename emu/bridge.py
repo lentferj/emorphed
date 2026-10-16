@@ -384,7 +384,7 @@ class MorpheusBridge:
         Sending a midimap writes the midimap at ``index`` (erasing what
         was there -- manual p.36), and when that location is the
         currently selected one the unit reloads its scratch midimap from
-        the newly stored map (manual p.232). A backup must have been taken
+        the newly stored map (manual p.233). A backup must have been taken
         first; that is the caller's job, and nothing here does it. There is
         no reply to wait for, so ``timeout`` is accepted for symmetry with
         the other methods and is unused.

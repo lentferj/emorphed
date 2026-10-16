@@ -239,7 +239,9 @@ tags, notes, search, device info. Morpheus-specific:
   named value from an enumeration, `r` to re-read. Writes are **gated**: the
   gate is locked by default, `w` arms it (and `--allow-write` arms only the
   *start* state), and a locked gate refuses rather than sends. The **first**
-  write backs the whole midimap up first and refuses if that read fails;
+  write backs the whole midimap up first -- a failed backup is announced and
+  the parameter write still proceeds; only the STORE refuses without a
+  successful backup this session;
   every write is read back, and only an agreed read-back is logged for `z`/`Z`
   undo. `s` is the **store** -- sending the whole map to a location -- and is
   **arm-then-fire**: it asks for a location, says what it erases, and waits

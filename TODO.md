@@ -232,8 +232,10 @@ It is no longer nothing. A midimap's own parameters (2048-2407, the
 manual's "Midimap Vers. 1 Parms") can now be edited through a **gated**
 path: `m` opens the editor, `w` arms the gate (locked by default;
 `--allow-write` arms only the start state), the first write backs the
-whole midimap up (`emu/backup.py`, kind/block "midimap") and refuses to
-proceed if that read fails, every write is read back and **only an agreed
+whole midimap up (`emu/backup.py`, kind/block "midimap"); a failed backup
+is announced and the parameter write still proceeds, and only the STORE
+refuses without a successful backup this session. Every write is read back
+and **only an agreed
 read-back is logged**, and `z`/`Z` undo through the UndoLog. The store --
 sending a whole `0x47` dump to a location -- is the one destructive step
 and is **arm-then-fire**: it names the location, states that it erases

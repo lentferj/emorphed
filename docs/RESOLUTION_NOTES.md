@@ -517,22 +517,24 @@ on a unit: the whole path is synthetic until the write bench is run.
 * Parameters are numbered **2048-2407**, 360 of them: the manual's table
   page is **250** ("2048-2407 Midimap Vers. 1 Parms"; `264 Midi Mode` sits
   one page earlier, p.249, which is how the first draft of the plan came to
-  cite the wrong pages -- the cites in `emu/midimap.py`, `emu/bridge.py`
-  and here were corrected after checking the PDF page by page). **360 =
+  cite the wrong pages). Those cites were wrong in the first draft and were
+  corrected against the PDF page by page **and** against the manual's own
+  cross-reference on **p.254**, whose worked example says "The Midimap
+  parameter offset numbers shown on pages 233-234 must be added to the base
+  offset" (355 + 2048 = 2403 for FX A Amt). The cites in
+  `emu/midimap.py`, `emu/bridge.py` and here now read accordingly. **360 =
   (730 - 10) / 2**: the midimap data message is 730 bytes -- a ten-byte
   frame around 360 fourteen-bit words -- the same count
   `messages.MIDIMAP_DATA_BYTES` and `parse_dump` use. The offset/name/range
-  table itself is on **pp. 232-233**.
+  table itself is on **pp. 233-234**.
 * **Write one parameter:** command `0x03`, `param = 2048 + offset`, value
   fourteen bits low-seven-first (`emu/messages.py` `parameter_data`;
   `MorpheusBridge.write_parameter` validates `2048 <= param <= 2407`). It
-  edits the **scratch** map (manual **p.232**: the scratch map is reached
-  by individual parameter requests, and a stored map loaded into the
+  edits the **scratch** map (manual **p.233**: a stored map loaded into the
   current location reloads the scratch map from it -- "If map is sent to
   current selected location, the scratch map will be loaded from the newly
-  stored map"). The same page carries the store's warning that a write to
-  a location erases what is there; the front-panel "Save Midimap" wording
-  is on p.36.
+  stored map"). The front-panel "Save Midimap" wording that states a write
+  erases what is there is on p.36.
 * **Read the whole map:** command `0x46` (Midimap Request), answered by a
   `0x47` Midimap Data dump of 360 words (`bridge.read_midimap`; a body
   shorter than 360 words raises with the manual's no-card wording, the
