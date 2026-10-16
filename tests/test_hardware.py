@@ -20,7 +20,9 @@ E-mu's documents, and the bridge has never talked to the instrument.
 This file is the other half. It asks the machine, and the machine's answer
 is the one that cannot be transcribed wrong:
 
-* **Read-only, structural.** Frame shapes, counts, checksums, parsing.
+* **Read-only, structural.** Frame shapes, counts, checksums, parsing. The
+  list replies are streamed and take seconds, which is why the timeouts are
+  the bank class.
 * **Printed observations** for the bench questions in TODO.md items 1-4 and
   9, recorded rather than asserted -- the manual guarantees structure, not
   the unit's particular contents.
@@ -43,6 +45,11 @@ import pytest
 from emu import banks
 from emu import bridge as b
 from emu import messages as m
+
+#: A streamed list reply: 3.7 s measured for 128 preset names
+#: (5000 B) at MIDI DIN speed; the 2.0 s request timeout was the
+#: bug, not the protocol.
+LIST_TIMEOUT = b.BANK_TIMEOUT
 
 
 def _collect(
@@ -83,6 +90,18 @@ def _collect(
         frames.append(data)
         last = time.time()
     return frames
+
+
+def frames_in(blob: bytes) -> list[bytes]:
+    """Split a blob at every F0 (a message may carry several frames)."""
+    starts = [i for i, byte in enumerate(blob) if byte == m.SYSEX_START]
+    if not starts:
+        return []
+    out: list[bytes] = []
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(blob)
+        out.append(blob[start:end])
+    return out
 
 
 class TestHardwareIdentity:
@@ -165,7 +184,7 @@ class TestHardwareNames:
         }[kind]
         reply_command = banks.Kind.LIST_REPLY[kind]
         outgoing = request(device=unit.device_id)
-        packet = unit.request(outgoing, reply_command, timeout=unit.timeout)
+        packet = unit.request(outgoing, reply_command, timeout=LIST_TIMEOUT)
 
         # The reply opens with a fourteen-bit count; the parsed list is
         # structural only -- no names are asserted on.
@@ -182,9 +201,21 @@ class TestHardwareNames:
                 f"{kind}: name {name!r} is {len(name)} chars, not "
                 f"{m.NAME_CHARS}"
             )
-            assert all(32 <= ord(char) <= 127 for char in name), (  # noqa: PLR2004
+            assert all(32 <= ord(char) < 127 for char in name), (  # noqa: PLR2004
                 f"{kind}: name {name!r} is not all ASCII 32-127"
             )
+
+        mapped_total = sum(r.count for r in banks.regions(kind))
+        card_total = sum(r.count for r in banks.regions(kind) if r.needs_card)
+        assert (
+            count_word == mapped_total
+            or (mapped_total - count_word) == card_total
+        ), (
+            f"{kind}: count word {count_word}, mapped total {mapped_total}, "
+            f"card total {card_total}"
+        )
+        if count_word != mapped_total:
+            print("no card fitted")
 
         print(
             f"\nnames({kind}): request {len(outgoing)} bytes, "
@@ -239,7 +270,7 @@ class TestHardwareBankRequest:
     ) -> None:
         # Full-bank read: 128 presets, the 40 s timeout class.
         outgoing = m.preset_bank_request(0, device=unit.device_id)
-        frames = _collect(
+        blobs = _collect(
             unit,
             outgoing,
             m.Command.PRESET_DATA,
@@ -247,23 +278,50 @@ class TestHardwareBankRequest:
             inactivity=3.0,
         )
 
-        print(
-            f"\npreset_bank_request(0): {len(frames)} frame(s) in "
-            f"{b.BANK_TIMEOUT:.0f} s window"
-        )
-        for index, frame in enumerate(frames):
+        # A single rtmidi message may carry several F0 frames; split them.
+        frames: list[bytes] = []
+        for blob in blobs:
+            frames.extend(frames_in(blob))
+
+        # How many frames of each length.
+        length_counts: dict[int, int] = {}
+        for frame in frames:
+            length_counts[len(frame)] = length_counts.get(len(frame), 0) + 1
+
+        # The number field's stride across the bank.
+        numbers: list[int] = []
+        for frame in frames:
             packet = m.parse(frame)
-            assert packet is not None
-            computed = m.checksum(packet.body)
-            sent = frame[-2]
-            status = "OK" if sent == computed else "MISMATCH"
-            print(
-                f"  frame {index + 1}: {len(frame)} bytes, number "
-                f"{packet.number:#06x} ({packet.number}), checksum "
-                f"{sent:#04x} vs recomputed {computed:#04x}: {status}"
-            )
+            if packet is not None and packet.number is not None:
+                numbers.append(packet.number)
+        diffs = sorted(
+            {numbers[i + 1] - numbers[i] for i in range(len(numbers) - 1)}
+        )
+
+        # Checksums verified only for single frames of a known size.
+        known_lengths = set(m.Command.SIZES.values())
+        checked = 0
+        matched = 0
+        for frame in frames:
+            if len(frame) in known_lengths:
+                packet = m.parse(frame)
+                if packet is not None:
+                    checked += 1
+                    if frame[-2] == m.checksum(packet.body):
+                        matched += 1
+
+        lengths_summary = ", ".join(
+            f"{length}x{count}"
+            for length, count in sorted(length_counts.items())
+        )
+        print(
+            f"\npreset_bank_request(0): {len(frames)} frame(s); "
+            f"lengths: {lengths_summary}; number stride: {diffs}; "
+            f"checksums {matched}/{checked} on known-size frames"
+        )
         # Recorded, not asserted: the reply/absence resolves TODO item 1's
-        # bank-request question.
+        # bank-request question. The 674-byte framing is an open question
+        # and is recorded here, not decided.
 
 
 class TestHardwareTiming:
