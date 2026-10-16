@@ -37,10 +37,11 @@ to be able to tell which one is unhappy.
 
 from __future__ import annotations
 
-from vinsynlib.config import DEFAULT_PATH, Settings
+from vinsynlib.config import DEFAULT_PATH, UNSET, Settings
 
 __all__ = [
     "DEFAULT_PATH",
+    "UNSET",
     "load_channel",
     "load_device_id",
     "load_last_port",

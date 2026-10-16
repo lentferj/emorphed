@@ -29,12 +29,17 @@ from textual.pilot import Pilot
 from textual.widgets import DataTable, Static
 from textual.worker import WorkerFailed
 
-from emorphed.app import VIEW_ALL_FAVOURITES, EmorphedApp
+from emorphed.app import (
+    VIEW_ALL,
+    VIEW_ALL_FAVOURITES,
+    VIEW_BANK_FAVOURITES,
+    EmorphedApp,
+)
 from emorphed.demo import DemoDevice
 from emorphed.scan import ScanScreen
 from emorphed.screens import PromptScreen, ReportScreen
 from emu import backup as bk
-from emu import banks
+from emu import banks, config
 from emu import catalog as cat
 from emu import favorites as fav
 from vinsynlib.ui.confirm import ConfirmScreen
@@ -1005,3 +1010,159 @@ class TestMidimapNameWrite:
             await pilot.pause()
             assert len(device.parameter_writes) - writes_before == 0
             assert any("32-127" in m for m, _ in said)
+
+
+class TestTheBrowserRemembersWhereItWas:
+    """The window opens where it was left: bank, slot cursor, and both
+    cycling views (`v`, emorphed's spelling of the family's `favourites
+    view` key, and `k`), through the one `_save_ui_state` helper, with
+    :data:`config.UNSET` meaning "leave this key alone"."""
+
+    def _app(self, config_path: str | None, **kwargs: Any) -> EmorphedApp:
+        return EmorphedApp(
+            DemoDevice(),
+            catalog=cat.empty(),
+            config_path=config_path,
+            **kwargs,
+        )
+
+    async def test_bank_slot_and_both_cycles_come_back(
+        self, tmp_path: Path
+    ) -> None:
+        path = str(tmp_path / "config.toml")
+        store = fav.Favorites(str(tmp_path / "f.db"))
+        store.add("H-RAM", 3, name="Invented")
+        try:
+            first = self._app(path, favorites=store)
+            async with first.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("k")  # hyperpreset
+                await pilot.press("v")  # bank favourites
+                await pilot.pause()
+                first.query_one("#bank-table").focus()
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("down")  # P-CARD
+                await pilot.pause()
+            second = self._app(path, favorites=store)
+            async with second.run_test() as pilot:
+                await pilot.pause()
+                assert second.kind_view == banks.Kind.HYPERPRESET
+                assert second.view_mode == VIEW_BANK_FAVOURITES
+                assert second._current_bank == banks.region_ids()[2]
+                bank_table = second.query_one("#bank-table", DataTable)
+                assert bank_table.cursor_row == 2
+                assert bank_table.has_focus
+        finally:
+            store.close()
+
+    async def test_a_saved_slot_row_and_pane_come_back(
+        self, tmp_path: Path
+    ) -> None:
+        path = str(tmp_path / "config.toml")
+        first = self._app(path)
+        async with first.run_test() as pilot:
+            await pilot.pause()
+            slot_table = first.query_one("#slot-table", DataTable)
+            slot_table.focus()
+            await pilot.pause()
+            for _ in range(6):
+                await pilot.press("down")
+            await pilot.pause()
+            assert slot_table.cursor_row == 6
+        second = self._app(path)
+        async with second.run_test() as pilot:
+            await pilot.pause()
+            slot_table = second.query_one("#slot-table", DataTable)
+            assert slot_table.cursor_row == 6
+            assert slot_table.has_focus
+
+    async def test_a_saved_slot_row_is_clamped_to_the_list(
+        self, tmp_path: Path
+    ) -> None:
+        path = str(tmp_path / "config.toml")
+        config.save_ui_state("slot_cursor", 400, path)
+        app = self._app(path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            slot_table = app.query_one("#slot-table", DataTable)
+            # P-RAM holds 128 slots; 400 clamps to the last row.
+            assert slot_table.cursor_row == slot_table.row_count - 1
+            assert slot_table.has_focus
+
+    async def test_garbage_stored_values_leave_the_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        path = str(tmp_path / "config.toml")
+        config.save_ui_state("bank_index", 999, path)
+        config.save_ui_state("view_mode", "nope", path)
+        config.save_ui_state("kind_view", "nope", path)
+        app = self._app(path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.view_mode == VIEW_ALL
+            assert app.kind_view == banks.Kind.PRESET
+            assert app._current_bank == banks.region_ids()[0]
+            assert app.query_one("#bank-table", DataTable).cursor_row == 0
+            assert app.query_one("#bank-table", DataTable).has_focus
+
+    async def test_no_config_path_runs_and_writes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        store_dir = tmp_path.parent / "elsewhere"
+        store_dir.mkdir()
+        store = fav.Favorites(str(store_dir / "f.db"))
+        store.add("H-RAM", 3, name="Invented")
+        try:
+            app = self._app(None, favorites=store)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.query_one("#bank-table").focus()
+                await pilot.press("down")
+                await pilot.pause()
+                app.query_one("#slot-table").focus()
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.press("v")
+                await pilot.pause()
+                await pilot.press("k")
+                for _ in range(4):
+                    await pilot.pause()
+                assert app.view_mode == VIEW_BANK_FAVOURITES
+                assert app.kind_view == banks.Kind.HYPERPRESET
+        finally:
+            store.close()
+        assert list(tmp_path.iterdir()) == [], "a test wrote into the checkout"
+
+    async def test_the_rating_filter_keeps_its_keys(
+        self, tmp_path: Path
+    ) -> None:
+        """Saving the browser state forwards only what it is given:
+        :data:`config.UNSET` on the four browser keys leaves the rating
+        filter's two keys in the file untouched."""
+        path = str(tmp_path / "config.toml")
+        config.save_ui_state("rating_stars", 2, path)
+        config.save_ui_state("rating_at_least", True, path)
+        store = fav.Favorites(str(tmp_path / "f.db"))
+        try:
+            first = self._app(path, favorites=store)
+            assert first.rating_filter is not None
+            assert first.rating_filter.stars == 2
+            async with first.run_test() as pilot:
+                await pilot.pause()
+                first.query_one("#bank-table").focus()
+                await pilot.press("down")
+                await pilot.press("v")
+                await pilot.press("k")
+                for _ in range(4):
+                    await pilot.pause()
+            second = self._app(path, favorites=store)
+            async with second.run_test():
+                await asyncio.sleep(0)
+                assert second.rating_filter is not None
+                assert second.rating_filter.stars == 2
+                assert second.rating_filter.at_least
+        finally:
+            store.close()
+        assert config.load_ui_int("rating_stars", path) == 2
+        assert config.load_ui_bool("rating_at_least", path) is True

@@ -72,6 +72,7 @@ from emu import catalog as cat
 from emu import livenames as _livenames
 from emu import messages as msg
 from emu import midimap as mm
+from emu.config import UNSET
 from emu.device import Device
 from emu.favorites import Favorite, Favorites
 from vinsynlib.build import build_of
@@ -336,6 +337,44 @@ class EmorphedApp(App[None]):
                 self.rating_filter = None
                 # The cache is best-effort; ignore a bad read.
                 _ = None
+
+        # Restore the persisted browser state: which region the left pane
+        # was on, which row the right pane's cursor was on, and where both
+        # cycling keys (`v` and `k`) stood. Loaded here, not in `on_mount`,
+        # because the first `_fill` down there builds its rows out of
+        # ``view_mode`` and ``_current_bank``; restoring anything later
+        # would mean filling twice. Injected path only -- ``None`` means a
+        # test that asked for silence and gets it.
+        self._saved_slot_cursor: int | None = None
+        if self._config_path is not None:
+            try:
+                from emu import config as _cfg
+
+                saved_view = _cfg.load_ui_state("view_mode", self._config_path)
+                # Never trust a stored value: a view this build renamed,
+                # a kind it does not have, or a stale bank index is
+                # ignored and the app opens on its defaults.
+                if isinstance(saved_view, str) and saved_view in VIEW_CYCLE:
+                    self.view_mode = saved_view
+                saved_kind = _cfg.load_ui_state("kind_view", self._config_path)
+                if (
+                    isinstance(saved_kind, str)
+                    and saved_kind in banks.Kind.ALL
+                ):
+                    self.kind_view = saved_kind
+                    self._kind_view = saved_kind
+                saved_bank = _cfg.load_ui_int("bank_index", self._config_path)
+                if saved_bank is not None and 0 <= saved_bank < len(
+                    self._bank_ids
+                ):
+                    self._current_bank = self._bank_ids[saved_bank]
+                self._saved_slot_cursor = _cfg.load_ui_int(
+                    "slot_cursor", self._config_path
+                )
+            except Exception:
+                # The cache is best-effort; a bad read is a default
+                # startup.
+                self._saved_slot_cursor = None
 
     @property
     def _changes(self) -> list[Any]:
@@ -963,8 +1002,24 @@ class EmorphedApp(App[None]):
             ("index", "index"),
         ):
             slots.add_column(label, key=key)
+        # Open on the bank that was on screen last time: the left pane's
+        # cursor has to sit on it before anything else moves, and its
+        # row-highlighted event is safe because its bank is the one
+        # already showing.
+        table.move_cursor(row=self._bank_ids.index(self._current_bank))
         self._fill(self._current_bank)
-        table.focus()
+        # The saved slot row, clamped to whatever this fill produced --
+        # one use only, and only where the list has a row to take.
+        saved_slot_cursor = self._saved_slot_cursor
+        if saved_slot_cursor is not None and self._current:
+            slots.move_cursor(
+                row=min(saved_slot_cursor, len(self._current) - 1)
+            )
+        self._saved_slot_cursor = None
+        if saved_slot_cursor is not None and self._current:
+            slots.focus()
+        else:
+            table.focus()
         printed = len(self.catalog)
         live = self.catalog.live_count
         if printed and live:
@@ -1076,6 +1131,44 @@ class EmorphedApp(App[None]):
         except Exception:
             # The cache is best-effort.
             _ = None
+
+    def _save_ui_state(
+        self,
+        *,
+        bank_index: Any = UNSET,
+        slot_cursor: Any = UNSET,
+        view_mode: Any = UNSET,
+        kind_view: Any = UNSET,
+    ) -> None:
+        """Persist UI state (bank, slot cursor, both cycling views).
+
+        :data:`UNSET` forwards nothing, so saving the view leaves the
+        bank position alone: the four keys are saved individually, and
+        only the ones named matter this time. ``None`` is the family's
+        "remove the key", and this helper never has a reason to spell
+        it -- the browser remembers where it was, it does not forget.
+
+        Only :class:`OSError` is swallowed -- a read-only directory or
+        a full disk, where forgetting the position is better than
+        refusing to run. A programming error (a list where an int
+        belongs) raises and is heard.
+        """
+        if self._config_path is None:
+            return
+        from emu import config as _cfg
+
+        try:
+            for key, value in (
+                ("bank_index", bank_index),
+                ("slot_cursor", slot_cursor),
+                ("view_mode", view_mode),
+                ("kind_view", kind_view),
+            ):
+                if value is UNSET:
+                    continue
+                _cfg.save_ui_state(key, value, self._config_path)
+        except OSError:
+            pass
 
     def _cursor_entry(self) -> banks.Slot | None:
         """The row under the cursor, or None."""
@@ -1294,6 +1387,7 @@ class EmorphedApp(App[None]):
             return
         index = VIEW_CYCLE.index(self.view_mode)
         self.view_mode = VIEW_CYCLE[(index + 1) % len(VIEW_CYCLE)]
+        self._save_ui_state(view_mode=self.view_mode)
         self._refill_keeping_place()
         shown = len(self._current)
         if self.view_mode == VIEW_ALL:
@@ -1403,9 +1497,24 @@ class EmorphedApp(App[None]):
         if event.data_table.id == "bank-table":
             row = event.cursor_row
             if 0 <= row < len(self._bank_ids):
-                self._fill(self._bank_ids[row])
+                bank_id = self._bank_ids[row]
+                # Idempotent on purpose. `_filling` cannot guard this --
+                # the message is delivered after the flag is cleared --
+                # so the handler has to be safe to receive for the bank
+                # it is already showing. Saving is part of that: it
+                # rewrites the same value, which is what idempotent
+                # means to a cache.
+                if bank_id != self._current_bank:
+                    self._fill(bank_id)
+                    self._save_ui_state(bank_index=row)
         elif event.data_table.id == "slot-table":
             self._detail(event.cursor_row)
+            # Only save the slot cursor when the slot table is focused --
+            # the user is actively navigating. Programmatic cursor moves
+            # during startup (while the bank pane has focus) must not
+            # overwrite the saved position they are busy restoring.
+            if event.data_table.has_focus:
+                self._save_ui_state(slot_cursor=event.cursor_row)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter on a slot. It arrives here, not as a binding."""
@@ -1430,6 +1539,7 @@ class EmorphedApp(App[None]):
         nxt = kinds[(idx + 1) % len(kinds)]
         self.kind_view = nxt
         self._kind_view = nxt
+        self._save_ui_state(kind_view=nxt)
         # Land on the first region of the newly selected kind.
         ids = banks.region_ids(nxt)
         if ids:
