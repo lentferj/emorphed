@@ -132,10 +132,10 @@ class MorpheusBridge:
         #: The SysEx device ID, 0-15. Not the MIDI channel; the Morpheus
         #: has both and they are set in different places.
         self.device_id = device_id
-        #: Which midimap read_parameter re-reads. Midimap parameters are
-        #: the current edit buffer's, so a read-back must ask for the
-        #: midimap that is current; default 0 until one is selected. See
-        #: :meth:`read_parameter`'s docstring.
+        #: Which midimap :meth:`read_midimap`/send operations target for
+        #: bookkeeping. A parameter write edits the **scratch** map, not a
+        #: stored one, so :meth:`read_parameter` no longer uses this; kept
+        #: for benches that pin the current map.
         self.current_midimap = 0
         self.channel = channel
         self.description = description
@@ -320,6 +320,8 @@ class MorpheusBridge:
     ) -> list[int]:
         """One midimap, as 360 fourteen-bit words. Silent.
 
+        STORED map (command 0x46/0x47), not the live scratch map.
+
         A request for a card midimap (16-31) with no card fitted is
         *ignored outright* by the unit, which ordinarily means silence and
         a timeout. Some units instead answer with a truncated frame; a
@@ -396,17 +398,24 @@ class MorpheusBridge:
         self._out.send_message(list(frame))
 
     def read_parameter(self, param: int) -> int | None:
-        """Read one midimap parameter back, by re-reading a whole map.
+        """Read one parameter's live value via a Parameter Request (0x02).
 
-        No per-parameter read is documented in what we have, so this
-        re-reads the owning midimap dump (see :meth:`read_midimap`) and
-        returns the word at the corresponding offset (param - 2048).
-        **Cost: one 730-byte reply per verification**, not one small
-        frame. The map re-read is for the midimap last handed to
-        :meth:`select_midimap` (index 0 if none has been selected).
+        The manual's Midimap Request page (p.232) is explicit: "The scratch
+        map is accessed by requesting MASTER settings or individual
+        parameter requests." A parameter *write* (command 0x03, Parameter
+        Data) edits the **scratch** map, and the stored map (command
+        0x46/0x47, :meth:`read_midimap`) is not touched by it, so a write
+        followed by a midimap dump would still show the old value. The
+        live read is therefore a Parameter Request, command 0x02, which
+        the unit answers with a Parameter Data frame (command 0x03)
+        echoing ``param`` and carrying its value.
 
-        Returns ``None`` when the dump came back short, which is the
-        no-card case.
+        This costs one small frame instead of one 730-byte dump. Returns
+        ``None`` when the unit stays silent, i.e. the manual's silence
+        rule (powered off, wrong port/ID, no card fitted for a card
+        region). It does **not** raise for a legitimately absent card
+        midimap; silence means "no", and the caller treats ``None`` as
+        "not available".
         """
         _low = mm.PARAM_BASE
         _high = mm.PARAM_BASE + len(mm.PARAMS) - 1
@@ -416,13 +425,18 @@ class MorpheusBridge:
                 f"{_low}-{_high} (manual pp. 249-250)"
             )
         try:
-            words = self.read_midimap(self.current_midimap)
+            packet = self.request(
+                m.parameter_request(param, device=self.device_id),
+                m.Command.PARAMETER_DATA,
+            )
         except (m.ProtocolError, TimeoutError):
             return None
-        offset = param - 2048
-        if offset >= len(words):
+        body = packet.body
+        if len(body) < 4:  # noqa: PLR2004
             return None
-        return words[offset]
+        # body: pl pm vl vm (four byte halves, two fourteen-bit words).
+        # The first word should echo `param`; the value is the second.
+        return body[2] | (body[3] << 7)
 
     # --- the one thing that makes a sound ----------------------------------
 

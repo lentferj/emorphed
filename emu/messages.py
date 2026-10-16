@@ -83,6 +83,7 @@ __all__ = [
     "midimap_list_request",
     "midimap_request",
     "parameter_data",
+    "parameter_request",
     "parse",
     "parse_name_list",
     "preset_bank_request",
@@ -530,6 +531,38 @@ def configuration_request(*, device: int = 0) -> bytes:
 
 def master_data_request(*, device: int = 0) -> bytes:
     return frame(Command.MASTER_DATA_REQUEST, device=device)
+
+
+def parameter_request(param: int, *, device: int = 0) -> bytes:
+    """Ask for one parameter's live (scratch-map) value, command ``0x02``.
+
+    Layout, from the manual's "Parameter Request" frame (p.234)::
+
+        F0 18 0C dd 02 pl pm F7
+
+    ``pl``/``pm`` are the parameter number, fourteen bits, least
+    significant seven bits first. Only the request; **the reply is a
+    Parameter Data frame (command ``0x03``)**, whose layout the manual
+    prints on the very next line ("Parameter Data", p.234)::
+
+        F0 18 0C dd 03 pl pm vl vm F7
+
+    i.e. the same ten-byte shape as the :func:`parameter_data` write frame,
+    echoing the requested parameter number in ``pl``/``pm`` and carrying its
+    value in ``vl``/``vm``. The reply is therefore parsed with :class:`Packet`
+    as-is -- ``packet.body`` holds the four bytes
+    ``(pl, pm, vl, vm)`` -- and the first pair should echo ``param``.
+    Requesting an unknown parameter number is not an error: the unit answers
+    with a value of zero (manual p.234, Parameter Request). Silence (no reply
+    at all) is the unit's real "I have nothing to say" and means one of the
+    transport/device-ID/no-card conditions per the manual's silence rule.
+
+    This is the *live* value: the manual says on the Midimap Request page
+    (p.232) that "the scratch map is accessed by requesting MASTER settings
+    or individual parameter requests", so a per-parameter read goes here, not
+    via a midimap dump (command 0x46/0x47), which returns the STORED map.
+    """
+    return _numbered_request(Command.PARAMETER_REQUEST, param, device)
 
 
 def parameter_data(param: int, value: int, *, device: int = 0) -> bytes:

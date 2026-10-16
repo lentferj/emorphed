@@ -423,6 +423,55 @@ class TestDemoMidimapRoundTrip:
             dev.write_parameter(2048, 0x4000)
 
 
+class TestParameterRequestBuilder:
+    def test_exact_bytes(self) -> None:
+        assert m.parameter_request(2062) == bytes.fromhex("f0180c00020e10f7")
+
+    def test_device_id(self) -> None:
+        assert m.parameter_request(2062, device=5) == bytes.fromhex(
+            "f0180c05020e10f7"
+        )
+
+
+class TestBridgeReadParameter:
+    def test_answers_from_parameter_data_reply(self) -> None:
+        param = 2062
+        value = 126
+        reply = m.parameter_data(param, value)
+        fake_in = _FakeIn([reply])
+        fake_out = _FakeOut()
+        bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
+        assert bridge.read_parameter(param) == value
+
+    def test_silent_port_gives_none(self) -> None:
+        param = 2062
+        fake_in = _FakeIn([])
+        fake_out = _FakeOut()
+        bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
+        bridge.timeout = 0.0
+        assert bridge.read_parameter(param) is None
+
+
+class TestDemoScratchVsStored:
+    def test_write_then_read_sees_new_value_stored_unchanged(self) -> None:
+        dev = DemoDevice()
+        stored_before = dev.read_midimap(0)
+        dev.write_parameter(2048, 7)
+        assert dev.read_parameter(2048) == 7
+        stored_after = dev.read_midimap(0)
+        assert stored_after[0] == stored_before[0]
+        assert dev.parameter_writes == [(2048, 7)]
+
+    def test_send_midimap_then_write_then_read(self) -> None:
+        words = [5] * 360
+        dev = DemoDevice()
+        dev.send_midimap(3, words)
+        assert dev.read_midimap(3) == words
+        dev.write_parameter(2048, 9)
+        assert dev.read_parameter(2048) == 9
+        assert dev.read_midimap(3)[0] == 5
+
+
 class TestBridgeSendMidimap:
     def test_sends_exact_frame(self) -> None:
         words = [i % 1000 for i in range(360)]

@@ -89,10 +89,15 @@ class DemoDevice:
         self.parameter_writes: list[tuple[int, int]] = []
         #: Midimap stores observed, in order: (index, words).
         self.midimap_stores: list[tuple[int, list[int]]] = []
-        #: The one mutable midimap this demo stands in for (360 words,
-        #: one per midimap parameter index 0-359). A write lands here so
-        #: the next read-back sees it.
+        #: The *scratch* midimap edits land in: a parameter write (command
+        #: 0x03) edits this, so the live read (command 0x02,
+        #: :meth:`read_parameter`) sees the new value.
         self._midimap: list[int] = [0] * 360
+        #: The *stored* midimap a command 0x46/0x47 dump returns. A
+        #: parameter write does NOT touch this, so ``read_midimap`` keeps
+        #: reporting the previously stored map -- the scratch/stored
+        #: distinction the manual draws on p.232.
+        self._stored_midimap: list[int] = [0] * 360
         self._closed = False
 
     def close(self) -> None:
@@ -184,7 +189,7 @@ class DemoDevice:
                 f"midimap {index}: no card fitted, so the request is "
                 f"ignored outright"
             )
-        return list(self._midimap)
+        return list(self._stored_midimap)
 
     def write_parameter(
         self, param: int, value: int, *, timeout: float | None = None
@@ -223,4 +228,7 @@ class DemoDevice:
             )
         stored = list(words)
         self.midimap_stores.append((index, stored))
-        self._midimap = stored
+        #: A store makes this map the live (scratch) map when its location
+        #: is the current one, so both sides move together.
+        self._stored_midimap = list(stored)
+        self._midimap = list(stored)
