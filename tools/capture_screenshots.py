@@ -28,7 +28,6 @@ import html
 import re
 import sys
 import tempfile
-import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -253,22 +252,38 @@ async def shot_scan_offer(app: Any, pilot: Any) -> str:
     await wait_for_screen(app, pilot, ScanOfferScreen)
     svg = await capture(app, pilot, "scan-offer")
     rendered = screen_text(svg)
-    # Guard against a frame that clips the offer's last word on the
-    # right edge: every wrapped offer line must appear verbatim, and no
-    # rendered line may reach the frame's right edge.
-    for raw in SCAN_OFFER.splitlines():
-        if not raw.strip():
-            continue
-        for line in textwrap.wrap(raw, SCAN_OFFER_SIZE[0]):
-            if line not in rendered:
-                raise AssertionError(
-                    f"scan-offer: wrapped line not visible in full: {line!r}"
-                )
-    longest = max((len(line) for line in rendered.splitlines()), default=0)
-    if not longest < SCAN_OFFER_SIZE[0]:
+    # Every WORD of the offer must be on screen, whole. The dialog overlays
+    # the browser, so the SVG's text carries the pane borders between the
+    # dialog's lines and Textual re-wraps to the dialog's own width: neither
+    # a whole-text nor a line-by-line compare can work here. A word that was
+    # clipped at the edge would come through partial (the bug this guard
+    # exists for: "one request per k"), so whole-word presence is the test.
+    box = (
+        "\u2502\u2500\u250c\u2510\u2514\u2518"
+        "\u251c\u2524\u252c\u2534\u253c"
+        "\u256d\u256e\u2570\u256f\u2576\u2574"
+    )
+    plain = "".join(" " if ch in box else ch for ch in rendered)
+    rendered_words = set(" ".join(plain.split()).split())
+    missing = [
+        word
+        for word in " ".join(SCAN_OFFER.split()).split()
+        if word not in rendered_words
+    ]
+    if missing:
         raise AssertionError(
-            f"scan-offer: longest rendered line {longest} does not fit frame "
-            f"width {SCAN_OFFER_SIZE[0]}"
+            f"scan-offer: {len(missing)} word(s) of the offer are not on "
+            f"screen, whole: {missing[:6]}"
+        )
+    # What must fit is the DIALOG, not the screen: the offer is a modal over
+    # the browser now, and the backdrop legitimately fills the frame. The
+    # dialog's inner width is its CSS (width 72, padding 1 2, solid border).
+    dialog_inner = 72 - 4 - 2
+    longest = max((len(line) for line in SCAN_OFFER.splitlines()), default=0)
+    if longest > dialog_inner:
+        raise AssertionError(
+            f"scan-offer: the offer's longest line is {longest} characters, "
+            f"wider than the dialog's {dialog_inner} -- it would re-wrap"
         )
     return svg
 

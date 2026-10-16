@@ -20,13 +20,14 @@ __all__ = ["SCAN_OFFER", "ScanOffer", "ScanOfferScreen", "ScanScreen"]
 ScanOffer = str
 
 SCAN_OFFER = (
-    "There is no name catalog yet, so the sounds show as numbers.\n\n"
-    "Scanning reads all three kinds of name back from the unit -- "
-    "presets, hyperpresets and midimaps -- one request per kind, about "
-    "three requests in total. Every one of those reads is silent: "
-    "nothing is selected, nothing plays, nothing is written to the "
-    "instrument, and the reading costs nothing audible on the Morpheus. "
-    "It takes a few seconds."
+    "There is no name catalog yet, so the sounds show as numbers.\n"
+    "\n"
+    "Scanning reads all three kinds of name back from the unit --\n"
+    "presets, hyperpresets and midimaps -- one request per kind,\n"
+    "about three requests in total. Every one of those reads is\n"
+    "silent: nothing is selected, nothing plays, nothing is written\n"
+    "to the instrument, and the reading costs nothing audible on the\n"
+    "Morpheus. It takes a few seconds."
 )
 
 
@@ -47,6 +48,37 @@ class ScanOfferScreen(ModalScreen[ScanOffer]):
         ("right", "next_button", "Next"),
         ("down", "next_button", "Next"),
     ]
+
+    #: p2ked's frame, because this screen had none: without a dialog border
+    #: and width the only visible "highlight" was the primary Button's blue
+    #: -- which marks the *default* answer and never moves, so the cursor
+    #: was invisible. The focus rule below is the cue that does move.
+    DEFAULT_CSS = """
+    ScanOfferScreen {
+        align: center middle;
+    }
+    #scan-offer {
+        width: 72;
+        height: auto;
+        border: solid $primary;
+        padding: 1 2;
+    }
+    #scan-offer-prompt {
+        height: auto;
+        padding: 1;
+    }
+    #scan-offer-buttons {
+        height: auto;
+        align: center middle;
+        padding-top: 1;
+    }
+    #scan-offer-buttons Button {
+        margin: 0 1;
+    }
+    Button:focus {
+        border: heavy $accent;
+    }
+    """
 
     def __init__(self, prompt: str = SCAN_OFFER) -> None:
         super().__init__()

@@ -107,6 +107,30 @@ class TestOfferScreens:
         # scan -> later -> never, then wraps to the first, then back.
         assert seen == ["scan", "later", "never", "scan", "later", "scan"]
 
+    async def test_the_focus_cue_follows_the_selection(self) -> None:
+        """The blue is the *default answer* marker and never moves; the
+        cursor is the focus cue, and it must be on whichever button is
+        selected (the report: only the blue frame was ever visible).
+        """
+
+        class H(App[None]):
+            def on_mount(self) -> None:
+                self.push_screen(ScanOfferScreen())
+
+        app = H()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            assert isinstance(screen, ScanOfferScreen)
+            scan = screen.query_one("#scan")
+            later = screen.query_one("#later")
+            assert scan.has_pseudo_class("focus"), "the first answer"
+            assert not later.has_pseudo_class("focus")
+            await pilot.press("right")
+            assert later.has_pseudo_class("focus"), "the cue did not move"
+            assert not scan.has_pseudo_class("focus"), (
+                "the cue stayed on the previous answer"
+            )
+
     async def test_enter_presses_the_focused_answer(self) -> None:
         """Moving focus is only useful if Enter then answers with it."""
         results: list[str] = []
@@ -294,3 +318,15 @@ class TestFlow:
                     break
                 await pilot.pause()
             assert not app._busy
+
+
+async def test_the_offer_frames_itself_and_shows_where_the_cursor_is() -> None:
+    """The dialog had no CSS at all, so the only visible highlight was the
+    primary button's blue -- and `variant="primary"` marks the default
+    answer, which never moves. The frame is p2ked's; the focus cue is the
+    thing that follows the cursor.
+    """
+    css = ScanOfferScreen.DEFAULT_CSS
+    assert "border: solid $primary" in css, "the dialog is not framed"
+    assert "width: 72" in css, "p2ked's width"
+    assert "Button:focus" in css, "nothing shows which answer is selected"
