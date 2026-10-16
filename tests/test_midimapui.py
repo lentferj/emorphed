@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import DataTable, Static
 
 from emorphed.edit import EditGate, MidimapEditor
 from emorphed.midimapui import MidimapEditScreen
@@ -23,6 +23,30 @@ def _status(screen: MidimapEditScreen) -> str:
         return str(screen.query_one(".status", Static).content)
     except Exception:
         return ""
+
+
+def _full_params() -> dict[int, int]:
+    values: dict[int, int] = {}
+    text = "TESTNAME1234"
+    for i, ch in enumerate(text):
+        values[i] = ord(ch)
+    for off in range(12, 360):
+        values[off] = 0
+    values[14] = 127
+    values[13] = 0
+    return values
+
+
+def _event(key: str, char: str | None = None) -> Any:
+    return type(
+        "E",
+        (),
+        {
+            "key": key,
+            "character": char,
+            "prevent_default": lambda self: None,
+        },
+    )()
 
 
 @pytest.mark.asyncio
@@ -41,25 +65,9 @@ async def test_nudge_and_typing_call_on_edit() -> None:
         assert (14, 6) in calls
 
         # typing a number commits through on_edit
-        ev_digit = type(
-            "E",
-            (),
-            {
-                "key": "7",
-                "character": "7",
-                "prevent_default": lambda self: None,
-            },
-        )()
+        ev_digit = _event("7", "7")
         screen.on_key(ev_digit)
-        ev_enter = type(
-            "E",
-            (),
-            {
-                "key": "enter",
-                "character": "\r",
-                "prevent_default": lambda self: None,
-            },
-        )()
+        ev_enter = _event("enter", "\r")
         screen.on_key(ev_enter)
         await pilot.pause()
         assert (14, 7) in calls
@@ -163,3 +171,181 @@ async def test_mismatching_readback_shows_mismatch_sentence() -> None:
         )
         await pilot.pause()
         assert "did not take" in _status(screen)
+
+
+@pytest.mark.asyncio
+async def test_range_enter_prompt_contains_label_range_value() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, {14: 127})
+        app.push_screen(screen)
+        await pilot.pause()
+
+        pushed: list[Any] = []
+
+        def fake_push(scr: Any, callback: Any = None) -> None:
+            pushed.append(scr)
+
+        app.push_screen = fake_push  # type: ignore[assignment]
+        screen.action_edit_current()
+        await pilot.pause()
+        assert pushed
+        title = str(getattr(pushed[-1], "_prompt_text", ""))
+        assert "Ch. Volume" in title
+        assert "0-127" in title
+        assert "127" in title
+        assert title != "value (0-127)"
+
+
+@pytest.mark.asyncio
+async def test_name_row_enter_opens_text_prompt_and_calls_on_name() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        calls_name: list[str] = []
+        calls_edit: list[tuple[int, int]] = []
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(
+            editor,
+            _full_params(),
+            on_name=calls_name.append,
+            on_edit=lambda o, v: calls_edit.append((o, v)),
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+
+        pushed: list[Any] = []
+
+        def fake_push(scr: Any, callback: Any = None) -> None:
+            pushed.append(scr)
+            if callback is not None:
+                callback("NEWNAME12345")
+
+        app.push_screen = fake_push  # type: ignore[assignment]
+        # cursor starts on name row
+        screen.action_edit_current()
+        await pilot.pause()
+        assert calls_name == ["NEWNAME12345"]
+        assert calls_edit == []
+        assert pushed and "Midimap Name (12 chars):" in str(
+            getattr(pushed[-1], "_prompt_text", "")
+        )
+
+
+@pytest.mark.asyncio
+async def test_filter_and_escape_clears() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+
+        initial = table.row_count
+
+        def fake_push_filter(scr: Any, callback: Any = None) -> None:
+            if callback is not None:
+                callback("Volume")
+
+        app.push_screen = fake_push_filter  # type: ignore[assignment]
+        screen.action_filter()
+        await pilot.pause()
+        assert table.row_count < initial
+        assert table.row_count > 0
+
+        def fake_push_clear(scr: Any, callback: Any = None) -> None:
+            if callback is not None:
+                callback(None)
+
+        app.push_screen = fake_push_clear  # type: ignore[assignment]
+        screen.action_filter()
+        await pilot.pause()
+        assert table.row_count == initial
+
+
+@pytest.mark.asyncio
+async def test_jump_keys() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+
+        screen.action_go_name()
+        await pilot.pause()
+        assert "Name" in _status(screen)
+
+        screen.action_go_effects()
+        await pilot.pause()
+        assert "Global / Effects" in _status(screen)
+
+        # h lands on name
+        screen.action_go_name()
+        await pilot.pause()
+        assert "Midimap Name" in _status(screen) or "Name" in _status(screen)
+
+        # n moves from name to next section
+        screen.action_go_name()
+        await pilot.pause()
+        before = _status(screen)
+        screen.action_next_section()
+        await pilot.pause()
+        assert _status(screen) != before
+        assert "Channel 1" in _status(screen)
+
+        # p moves back
+        screen.action_prev_section()
+        await pilot.pause()
+        assert "Name" in _status(screen)
+
+
+@pytest.mark.asyncio
+async def test_typing_label_and_out_of_range() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        calls: list[tuple[int, int]] = []
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(
+            editor, {14: 5}, on_edit=lambda o, v: calls.append((o, v))
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+
+        screen.on_key(_event("2", "2"))
+        screen.on_key(_event("0", "0"))
+        screen.on_key(_event("0", "0"))
+        status = _status(screen)
+        assert "Ch. Volume" in status
+
+        screen.on_key(_event("enter", "\r"))
+        await pilot.pause()
+        assert calls == []
+        assert "0-127" in _status(screen)
+
+
+@pytest.mark.asyncio
+async def test_no_prompt_title_only_value() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, {14: 5})
+        app.push_screen(screen)
+        await pilot.pause()
+
+        pushed: list[Any] = []
+
+        def fake_push(scr: Any, callback: Any = None) -> None:
+            pushed.append(scr)
+
+        app.push_screen = fake_push  # type: ignore[assignment]
+        screen.action_edit_current()
+        await pilot.pause()
+        for scr in pushed:
+            title = str(getattr(scr, "_prompt_text", ""))
+            assert title != "value (0-5)" and not title.startswith("value (")
+
+
+if __name__ == "__main__":
+    pass

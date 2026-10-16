@@ -7,7 +7,8 @@
 
 A modal over the browser: the unit's own parameter table, one row per word,
 with the value under a cell cursor. A screen owns no worker and sends
-nothing on its own -- every change goes out through ``on_edit``.
+nothing on its own -- every change goes out through ``on_edit`` (or
+``on_name`` for the twelve-character name, which is one row here).
 """
 
 from __future__ import annotations
@@ -27,6 +28,14 @@ from vinsynlib.ui.modals import ChoiceScreen
 from vinsynlib.ui.prompt import PromptScreen
 
 __all__ = ["MidimapEditScreen"]
+
+
+_NAME_WORDS = 12
+_ASCII_FIRST = 32
+_ASCII_LAST = 128
+_CHANNEL_STRIDE = 20
+_CHANNEL_BASE = 12
+_GLOBAL_BASE = 332  # 12 + 16 * 20; boundaries in PARAMS
 
 
 class MidimapEditScreen(ModalScreen[None]):
@@ -55,6 +64,11 @@ class MidimapEditScreen(ModalScreen[None]):
         Binding("Z", "undo_all", "Undo all"),
         Binding("r", "re_read", "Re-read"),
         Binding("s", "store", "Store"),
+        Binding("h", "go_name", "Name"),
+        Binding("x", "go_effects", "Effects"),
+        Binding("n", "next_section", "Next section"),
+        Binding("p", "prev_section", "Prev section"),
+        Binding("/", "filter", "Filter"),
     ]
 
     def __init__(  # noqa: PLR0913, PLR0917
@@ -66,9 +80,10 @@ class MidimapEditScreen(ModalScreen[None]):
         on_undo: Callable[[int | None], None] | None = None,
         on_store: Callable[[], None] | None = None,
         *args: Any,
+        on_name: Callable[[str], None] | None = None,
         **kwargs: Any,
     ) -> None:
-        # allow positional callbacks after params
+        # allow positional callbacks after params (legacy shim)
         if args:
             if on_edit is None and len(args) >= 1:
                 on_edit = args[0]
@@ -85,9 +100,12 @@ class MidimapEditScreen(ModalScreen[None]):
         self._on_re_read = on_re_read
         self._on_undo = on_undo
         self._on_store = on_store
-        self._ordered: list[int] = sorted(self._values)
+        self._on_name = on_name
         self._typing: str = ""
         self._typing_offset: int | None = None
+        self._filter: str = ""
+        self._build_rows()
+        self._ordered: list[Any] = self._visible_rows()
 
     @property
     def editor(self) -> Any:
@@ -97,25 +115,154 @@ class MidimapEditScreen(ModalScreen[None]):
     def gate(self) -> Any:
         return getattr(self._editor, "gate", self._editor)
 
-    def _current_offset(self) -> int | None:
+    # ------------------------------------------------------------------ rows
+
+    def _has_name_block(self) -> bool:
+        return any(0 <= off < _NAME_WORDS for off in self._values)
+
+    def _build_rows(self) -> None:
+        offsets = sorted(self._values)
+        rows: list[Any] = []
+        if self._has_name_block():
+            rows.append("name")
+        for off in offsets:
+            if 0 <= off < _NAME_WORDS:
+                continue
+            rows.append(off)
+        self._all_rows: list[Any] = rows
+
+    def _section_of(self, row: Any) -> str:
+        if row == "name":
+            return "Name"
+        off = int(row)
+        if off < _GLOBAL_BASE:
+            channel = (off - _CHANNEL_BASE) // _CHANNEL_STRIDE + 1
+            # clamp: offsets below the channel base would be name chars
+            channel = max(channel, 1)
+            return f"Channel {channel}"
+        return "Global / Effects"
+
+    def _param_of(self, row: Any) -> Any:
+        if row == "name":
+            try:
+                return mm.param_at(0)
+            except Exception:
+                return None
+        try:
+            return mm.param_at(int(row))
+        except Exception:
+            return None
+
+    def _label_of(self, row: Any) -> str:
+        if row == "name":
+            return "Midimap Name"
+        param = self._param_of(row)
+        return getattr(param, "label", f"offset {row}")
+
+    def _raw_value(self, row: Any) -> int:
+        if row == "name":
+            return 0
+        off = int(row)
+        param = self._param_of(row)
+        if param is None:
+            return self._values.get(off, 0)
+        return self._values.get(off, getattr(param, "low", 0))
+
+    def _name_text(self) -> str:
+        words = [self._values.get(i, 32) for i in range(12)]
+        try:
+            return mm.name_of(words)
+        except Exception:
+            return "".join(
+                chr(w) if _ASCII_FIRST <= w < _ASCII_LAST else "?"
+                for w in words
+            )
+
+    def _display_value(self, row: Any) -> str:
+        if row == "name":
+            return self._name_text()
+        param = self._param_of(row)
+        value = self._raw_value(row)
+        try:
+            return mm.spell(param, value) if param is not None else str(value)
+        except Exception:
+            return str(value)
+
+    def _range_text(self, row: Any) -> str:
+        if row == "name":
+            return "32-127"
+        param = self._param_of(row)
+        if param is None:
+            return "?"
+        if param.choices:
+            return f"{param.low}-{param.high} ({len(param.choices)} named)"
+        return f"{param.low}-{param.high}"
+
+    def _visible_rows(self) -> list[Any]:
+        needle = self._filter.strip().lower()
+        if not needle:
+            return list(self._all_rows)
+        out: list[Any] = []
+        for row in self._all_rows:
+            if needle in self._label_of(row).lower():
+                out.append(row)
+        return out
+
+    def _refresh_table(self) -> None:
         try:
             table = self.query_one("#midimap-table", DataTable)
         except Exception:
-            if self._ordered:
-                return self._ordered[0]
-            return None
-        row = table.cursor_row
-        if self._ordered and 0 <= row < len(self._ordered):
-            return self._ordered[row]
-        return None
+            return
+        self._ordered = self._visible_rows()
+        table.clear()
+        for row in self._ordered:
+            section = self._section_of(row)
+            label = self._label_of(row)
+            display = self._display_value(row)
+            rng = self._range_text(row)
+            key = "name" if row == "name" else str(row)
+            table.add_row(
+                key,
+                section,
+                label,
+                display,
+                rng,
+                key=key,
+            )
+        if table.row_count:
+            table.move_cursor(row=0, column=2)
 
-    def _current_param(self) -> Any:
-        off = self._current_offset()
-        if off is None:
+    def _current_row(self) -> Any | None:
+        if not self._ordered:
             return None
         try:
-            return mm.param_at(off)
-        except (ValueError, KeyError):
+            table = self.query_one("#midimap-table", DataTable)
+        except Exception:
+            return self._ordered[0]
+        row = table.cursor_row
+        if 0 <= row < len(self._ordered):
+            return self._ordered[row]
+        return self._ordered[0]
+
+    def _current_offset(self) -> int | None:
+        row = self._current_row()
+        if row == "name" or row is None:
+            return None
+        try:
+            return int(row)
+        except Exception:
+            return None
+
+    def _current_param(self) -> Any:
+        row = self._current_row()
+        if row is None:
+            return None
+        return self._param_of(row)
+
+    def _index_of_row(self, row_id: Any) -> int | None:
+        try:
+            return self._ordered.index(row_id)
+        except ValueError:
             return None
 
     def _spell(self, offset: int, value: int) -> str:
@@ -123,6 +270,45 @@ class MidimapEditScreen(ModalScreen[None]):
             return mm.spell(mm.param_at(offset), value)
         except Exception:
             return str(value)
+
+    def _update_status(self) -> None:
+        row = self._current_row()
+        if row is None:
+            return
+        try:
+            table = self.query_one("#midimap-table", DataTable)
+        except Exception:
+            table = None
+        index = 0
+        if self._ordered:
+            cur = table.cursor_row if table is not None else 0
+            if not (0 <= cur < len(self._ordered)):
+                cur = self._index_of_row(row) or 0
+            index = cur
+        total = len(self._ordered)
+        section = self._section_of(row)
+        label = self._label_of(row)
+        value: Any = ""
+        if row == "name":
+            value = self._name_text()
+            rng = "32-127"
+        else:
+            off = int(row)
+            param = self._param_of(row)
+            value = self._raw_value(row)
+            rng = f"{param.low}-{param.high}" if param is not None else "?"
+            with contextlib.suppress(Exception):
+                value = self._values.get(off, getattr(param, "low", value))
+        try:
+            status = self.query_one(".status", Static)
+            status.update(
+                f"row {index + 1}/{total} · {section} · "
+                f"{label} {rng} (now {value})"
+            )
+        except Exception:  # noqa: S110
+            pass
+
+    # --------------------------------------------------------------- compose
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -132,8 +318,9 @@ class MidimapEditScreen(ModalScreen[None]):
             )
             yield Static("", classes="status")
             yield Static(
-                "[dim]w gate · + / - nudge · digits type · enter choices · "
-                "r re-read · s store · z / Z undo · esc / q close[/dim]",
+                "[dim]enter value · / filter · n / p section · x effects · "
+                "h name · w gate · + / - nudge · digits type · r re-read · "
+                "s store · z / Z undo · esc / q close[/dim]",
                 classes="hints",
             )
 
@@ -143,27 +330,9 @@ class MidimapEditScreen(ModalScreen[None]):
         table.add_column("label", key="label")
         table.add_column("value", key="value")
         table.add_column("range", key="range")
-        for off in self._ordered:
-            param = None
-            with contextlib.suppress(Exception):
-                param = mm.param_at(off)
-            value = self._values.get(off, 0)
-            label = getattr(param, "label", f"offset {off}")
-            if param is not None and param.choices:
-                rng = f"{param.low}-{param.high} ({len(param.choices)} named)"
-            elif param is not None:
-                rng = f"{param.low}-{param.high}"
-            else:
-                rng = "?"
-            table.add_row(
-                str(off),
-                label,
-                self._spell(off, value),
-                rng,
-                key=str(off),
-            )
-        if table.row_count:
-            table.move_cursor(row=0, column=2)
+        table.add_column("section", key="section")
+        self._refresh_table()
+        self._update_status()
 
     def say(self, message: str, *, refused: bool = False) -> None:
         try:
@@ -186,14 +355,28 @@ class MidimapEditScreen(ModalScreen[None]):
             off = parameter_id if parameter_id is not None else offset
             if off is not None and value is not None:
                 self._values[off] = value
+                row_is_name = (
+                    isinstance(off, int)
+                    and 0 <= off < _NAME_WORDS
+                    and "name" in self._all_rows
+                )
+                row: Any = "name" if row_is_name else off
                 try:
                     table = self.query_one("#midimap-table", DataTable)
                     with contextlib.suppress(Exception):
-                        mm.param_at(off)
-                    spelled = self._spell(off, value)
-                    table.update_cell(str(off), "value", spelled)
+                        mm.param_at(int(off)) if isinstance(off, int) else None
+                    if row == "name":
+                        spelled = self._name_text()
+                    else:
+                        spelled = self._spell(int(off), value)
+                    with contextlib.suppress(Exception):
+                        key = "name" if row == "name" else str(row)
+                        table.update_cell(key, "value", spelled)
                 except Exception:  # noqa: S110
                     pass
+                self._build_rows()
+                self._ordered = self._visible_rows()
+                self._refresh_table()
         self.say(message, refused=not ok)
 
     def _report(self) -> str:
@@ -218,10 +401,54 @@ class MidimapEditScreen(ModalScreen[None]):
     def action_nudge_down(self) -> None:
         self._nudge(-1)
 
-    def _nudge(self, by: int) -> None:
-        off = self._current_offset()
-        if off is None:
+    def _nudge(self, by: int) -> None:  # noqa: C901, PLR0912, PLR0915
+        row = self._current_row()
+        if row is None:
             return
+        if row == "name":
+            # The name is one field, but a nudge keeps the legacy
+            # per-character behaviour for the first character so callers that
+            # still wire only on_edit keep working.
+            off = 0
+            param = None
+            try:
+                param = mm.param_at(0)
+            except Exception:
+                param = None
+            if param is None:
+                return
+            current = self._values.get(off, param.low)
+            current = max(current, param.low)
+            if by > 0:
+                value = min(param.high, current + by)
+            else:
+                value = max(param.low, current + by)
+            refusal = None
+            try:
+                refusal = getattr(self._editor, "allow", lambda _o, _v: None)(
+                    off, value
+                )
+            except Exception:
+                refusal = None
+            if refusal is not None:
+                with contextlib.suppress(Exception):
+                    refusal = self._editor.gate.refuse() or refusal
+                self.say(refusal, refused=True)
+                return
+            self._values[off] = value
+            if self._on_edit is not None:
+                self._on_edit(off, value)
+            self._refresh_table()
+            new_idx = self._index_of_row("name")
+            if new_idx is not None:
+                try:
+                    table = self.query_one("#midimap-table", DataTable)
+                    table.move_cursor(row=new_idx, column=2)
+                except Exception:  # noqa: S110
+                    pass
+            self._update_status()
+            return
+        off = int(row)
         param = None
         try:
             param = mm.param_at(off)
@@ -256,7 +483,6 @@ class MidimapEditScreen(ModalScreen[None]):
         except Exception:
             refusal = None
         if refusal is not None:
-            # also editor.gate.refuse
             with contextlib.suppress(Exception):
                 refusal = self._editor.gate.refuse() or refusal
         if refusal is not None:
@@ -265,11 +491,37 @@ class MidimapEditScreen(ModalScreen[None]):
         self._values[off] = value
         if on_edit is not None:
             on_edit(off, value)
+        self._refresh_table()
+        # keep cursor on same row
+        new_idx = self._index_of_row(row)
+        if new_idx is not None:
+            try:
+                table = self.query_one("#midimap-table", DataTable)
+                table.move_cursor(row=new_idx, column=2)
+            except Exception:  # noqa: S110
+                pass
+        self._update_status()
 
-    def action_edit_current(self) -> None:  # noqa: C901
-        off = self._current_offset()
-        if off is None:
+    def action_edit_current(self) -> None:  # noqa: C901, PLR0915
+        row = self._current_row()
+        if row is None:
             return
+        if row == "name":
+            current_name = self._name_text()
+
+            def apply_name(text: str | None) -> None:
+                if text is None:
+                    return
+                if self._on_name is not None:
+                    self._on_name(text)
+
+            self.app.push_screen(
+                PromptScreen("Midimap Name (12 chars):", current_name),
+                apply_name,
+            )
+            return
+
+        off = int(row)
         param = None
         try:
             param = mm.param_at(off)
@@ -284,22 +536,34 @@ class MidimapEditScreen(ModalScreen[None]):
                 if chosen is None:
                     return
                 value = param.low + chosen
-                # gate check
-                refusal = self._editor.allow(off, value)
+                refusal = None
+                try:
+                    refusal = self._editor.allow(off, value)
+                except Exception:
+                    refusal = None
                 if refusal is not None:
                     self.say(refusal, refused=True)
                     return
                 self._values[off] = value
                 if self._on_edit is not None:
                     self._on_edit(off, value)
+                self._refresh_table()
+                new_idx = self._index_of_row(row)
+                if new_idx is not None:
+                    try:
+                        table = self.query_one("#midimap-table", DataTable)
+                        table.move_cursor(row=new_idx, column=2)
+                    except Exception:  # noqa: S110
+                        pass
+                self._update_status()
 
             self.app.push_screen(
-                ChoiceScreen("Pick a value:", choices, current=idx), picked
+                ChoiceScreen(param.label, choices, current=idx), picked
             )
         else:
-            # digits typing already handles; open prompt as fallback
             param_low = getattr(param, "low", 0) if param else 0
             param_high = getattr(param, "high", 0) if param else 0
+            current_val = self._values.get(off, param_low) if param else 0
 
             def apply(text: str | None) -> None:
                 if not text:
@@ -309,16 +573,33 @@ class MidimapEditScreen(ModalScreen[None]):
                 except ValueError:
                     self.say(f"{text!r} is not a number", refused=True)
                     return
-                refusal = self._editor.allow(off, value)
+                refusal = None
+                try:
+                    refusal = self._editor.allow(off, value)
+                except Exception:
+                    refusal = None
                 if refusal is not None:
                     self.say(refusal, refused=True)
                     return
                 self._values[off] = value
                 if self._on_edit is not None:
                     self._on_edit(off, value)
+                self._refresh_table()
+                new_idx = self._index_of_row(row)
+                if new_idx is not None:
+                    try:
+                        table = self.query_one("#midimap-table", DataTable)
+                        table.move_cursor(row=new_idx, column=2)
+                    except Exception:  # noqa: S110
+                        pass
+                self._update_status()
 
             self.app.push_screen(
-                PromptScreen(f"value ({param_low}-{param_high}):", ""),
+                PromptScreen(
+                    f"{param.label if param else 'value'}: "
+                    f"{param_low}-{param_high} (now {current_val})",
+                    str(current_val),
+                ),
                 apply,
             )
 
@@ -338,90 +619,232 @@ class MidimapEditScreen(ModalScreen[None]):
         if self._on_undo is not None:
             self._on_undo(None)
 
-    def on_key(self, event: Any) -> None:  # noqa: C901, PLR0911
+    def action_go_name(self) -> None:
+        self._filter = ""
+        self._refresh_table()
+        idx = self._index_of_row("name")
+        if idx is not None:
+            try:
+                table = self.query_one("#midimap-table", DataTable)
+                table.move_cursor(row=idx, column=2)
+            except Exception:  # noqa: S110
+                pass
+        self._update_status()
+
+    def action_go_effects(self) -> None:
+        self._filter = ""
+        self._refresh_table()
+        target = None
+        for i, r in enumerate(self._ordered):
+            if self._section_of(r) == "Global / Effects":
+                target = i
+                break
+        if target is not None:
+            try:
+                table = self.query_one("#midimap-table", DataTable)
+                table.move_cursor(row=target, column=2)
+            except Exception:  # noqa: S110
+                pass
+        self._update_status()
+
+    def action_next_section(self) -> None:  # noqa: C901, PLR0912
+        if not self._ordered:
+            return
+        try:
+            table = self.query_one("#midimap-table", DataTable)
+        except Exception:
+            table = None
+        cur = table.cursor_row if table is not None else 0
+        if not (0 <= cur < len(self._ordered)):
+            cur = 0
+        # find section boundaries
+        bounds: list[int] = [0]
+        for i in range(1, len(self._ordered)):
+            if self._section_of(self._ordered[i]) != self._section_of(
+                self._ordered[i - 1]
+            ):
+                bounds.append(i)
+        # find current boundary
+        current_bound = 0
+        for b in bounds:
+            if b <= cur:
+                current_bound = b
+            else:
+                break
+        # next boundary strictly after current_bound
+        next_bound = None
+        for b in bounds:
+            if b > current_bound:
+                next_bound = b
+                break
+        if next_bound is None and bounds:
+            next_bound = bounds[0]
+        if next_bound is not None:
+            try:
+                t = self.query_one("#midimap-table", DataTable)
+                t.move_cursor(row=next_bound, column=2)
+            except Exception:  # noqa: S110
+                pass
+        self._update_status()
+
+    def action_prev_section(self) -> None:  # noqa: C901, PLR0912
+        if not self._ordered:
+            return
+        try:
+            table = self.query_one("#midimap-table", DataTable)
+        except Exception:
+            table = None
+        cur = table.cursor_row if table is not None else 0
+        if not (0 <= cur < len(self._ordered)):
+            cur = 0
+        bounds: list[int] = [0]
+        for i in range(1, len(self._ordered)):
+            if self._section_of(self._ordered[i]) != self._section_of(
+                self._ordered[i - 1]
+            ):
+                bounds.append(i)
+        # find current boundary
+        current_bound = 0
+        for b in bounds:
+            if b <= cur:
+                current_bound = b
+            else:
+                break
+        # previous boundary strictly before current_bound
+        prev_bound = None
+        for b in reversed(bounds):
+            if b < current_bound:
+                prev_bound = b
+                break
+        if prev_bound is None and bounds:
+            prev_bound = bounds[-1]
+        if prev_bound is not None:
+            try:
+                t = self.query_one("#midimap-table", DataTable)
+                t.move_cursor(row=prev_bound, column=2)
+            except Exception:  # noqa: S110
+                pass
+        self._update_status()
+
+    def action_filter(self) -> None:
+        current = self._filter
+
+        def apply(text: str | None) -> None:
+            if text is None:
+                self._filter = ""
+            else:
+                self._filter = text
+            self._refresh_table()
+            self._update_status()
+
+        self.app.push_screen(PromptScreen("filter label:", current), apply)
+
+    def on_key(self, event: Any) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915
         key = getattr(event, "key", "")
         char = getattr(event, "character", None)
-        # Digits type in place for the current cell.
+        # Digits type in place for the current cell -- plain ranges only.
         if char is not None and char.isdigit():
-            off = self._current_offset()
-            if off is None:
+            row = self._current_row()
+            if row == "name":
+                event.prevent_default()
                 return
+            param = self._param_of(row) if row is not None else None
+            if row is None or (param is not None and param.choices):
+                return
+            off = row
             if self._typing_offset != off:
                 self._typing = ""
                 self._typing_offset = off
             self._typing += char
             try:
                 status = self.query_one(".status", Static)
-                status.update(f"typing: {self._typing}")
+                p = self._param_of(row)
+                low = getattr(p, "low", 0) if p is not None else 0
+                high = getattr(p, "high", 0) if p is not None else 0
+                lbl = self._label_of(row)
+                status.update(
+                    f"typing {self._typing} for {lbl} ({low}-{high})"
+                )
             except Exception:  # noqa: S110
                 pass
             event.prevent_default()
             return
         if key in ("enter", "return") and self._typing:
             # commit typed number
-            off = self._current_offset() or self._typing_offset
-            if off is None:
+            row = self._current_row()
+            off = row
+            if off is None or off == "name":
                 self._typing = ""
+                self._typing_offset = None
                 return
             try:
                 value = int(self._typing)
             except ValueError:
                 self.say(f"{self._typing!r} is not a number", refused=True)
                 self._typing = ""
+                self._typing_offset = None
                 return
             refusal = None
             try:
-                refusal = self._editor.allow(off, value)
+                refusal = self._editor.allow(int(off), value)
             except Exception:
                 refusal = None
             if refusal is not None:
                 self.say(refusal, refused=True)
                 self._typing = ""
+                self._typing_offset = None
                 return
-            self._values[off] = value
+            self._values[int(off)] = value
             if self._on_edit is not None:
-                self._on_edit(off, value)
+                self._on_edit(int(off), value)
             self._typing = ""
             self._typing_offset = None
+            self._refresh_table()
+            new_idx = self._index_of_row(row)
+            if new_idx is not None:
+                try:
+                    table = self.query_one("#midimap-table", DataTable)
+                    table.move_cursor(row=new_idx, column=2)
+                except Exception:  # noqa: S110
+                    pass
+            self._update_status()
             event.prevent_default()
             return
         if key in ("backspace",) and self._typing:
             self._typing = self._typing[:-1]
+            row = self._current_row()
+            if row is not None and row != "name":
+                try:
+                    status = self.query_one(".status", Static)
+                    p = self._param_of(row)
+                    low = getattr(p, "low", 0) if p is not None else 0
+                    high = getattr(p, "high", 0) if p is not None else 0
+                    lbl = self._label_of(row)
+                    status.update(
+                        f"typing {self._typing} for {lbl} ({low}-{high})"
+                    )
+                except Exception:  # noqa: S110
+                    pass
             event.prevent_default()
             return
         if key in ("escape",):
             self._typing = ""
             self._typing_offset = None
 
+    def on_data_table_cell_highlighted(self, event: Any) -> None:
+        self._typing = ""
+        self._typing_offset = None
+        self._update_status()
+
+    def on_data_table_row_highlighted(self, event: Any) -> None:
+        self._typing = ""
+        self._typing_offset = None
+        self._update_status()
+
     def update_params(self, params: dict[int, int]) -> None:
         self._values = dict(params)
-        self._ordered = sorted(self._values)
-        try:
-            table = self.query_one("#midimap-table", DataTable)
-            table.clear()
-            for off in self._ordered:
-                param = None
-                try:
-                    param = mm.param_at(off)
-                except Exception:
-                    param = None
-                value = self._values.get(off, 0)
-                label = param.label if param is not None else f"offset {off}"
-                if param is not None and param.choices:
-                    rng = (
-                        f"{param.low}-{param.high} "
-                        f"({len(param.choices)} named)"
-                    )
-                elif param is not None:
-                    rng = f"{param.low}-{param.high}"
-                else:
-                    rng = "?"
-                table.add_row(
-                    str(off),
-                    label,
-                    self._spell(off, value),
-                    rng,
-                    key=str(off),
-                )
-        except Exception:  # noqa: S110
-            pass
+        self._build_rows()
+        self._filter = ""
+        self._ordered = self._visible_rows()
+        self._refresh_table()
+        self._update_status()
