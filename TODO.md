@@ -541,7 +541,7 @@ the operator heard each object and named what it was):
 | 4 | hyperpresets, card |
 
 **Two numberings, and that is how the bug arose.** The manual's "0x0400 +
-the bank number (0-2)" (p.226) is the **SysEx REQUEST** numbering --
+the bank number (0-2)" (p.228) is the **SysEx REQUEST** numbering --
 presets, RAM/ROM/CARD. The Bank Select numbering the wire actually uses is
 a different one: the p.159 box, "ll = Bank number (00-04)", the five rows
 above. Reading "bank 2" off the request side and sending it as a Bank

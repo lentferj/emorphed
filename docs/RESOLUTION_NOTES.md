@@ -467,7 +467,7 @@ number. The measured table is therefore fixed: **P-RAM 0, P-ROM 1, H-RAM 2,
 P-CARD 3, H-CARD 4.** Nothing here is arithmetic.
 
 **Two numberings, and the manual keeps them on different pages.** The Preset
-Request text (p.226) says "Values 0x0400 + the bank number (0-2)" for
+Request text (p.228) says "Values 0x0400 + the bank number (0-2)" for
 presets -- RAM/ROM/CARD. That is the **SysEx REQUEST** numbering and belongs
 to the request side only. The **Bank Select** numbering the wire actually
 uses is the p.159 box, "ll = Bank number (00-04)", the five rows above.
