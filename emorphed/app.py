@@ -61,12 +61,15 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import DataTable, Header, Static
 
+from emorphed import edit as edmod
 from emorphed.scan import SCAN_OFFER, ScanOfferScreen, ScanScreen
 from emorphed.screens import KEY_HINTS, PromptScreen, ReportScreen
+from emu import backup as bkmod
 from emu import banks
 from emu import catalog as cat
 from emu import livenames as _livenames
 from emu import messages as msg
+from emu import midimap as mm
 from emu.device import Device
 from emu.favorites import Favorite, Favorites
 from vinsynlib.build import build_of
@@ -150,6 +153,13 @@ class TagNoteChange:
             object.__setattr__(self, "value", self.old_text)
 
 
+@dataclass(frozen=True)
+class ParamChange:
+    offset: int
+    old: int
+    new: int
+
+
 class _ChangesView(list[Any]):
     def __init__(self, log: UndoLog, changes: list[Any]) -> None:
         super().__init__(changes)
@@ -169,6 +179,8 @@ def _change_label(change: object) -> str:
     if isinstance(change, TagNoteChange):
         field = getattr(change, "field", "tags")
         return "note" if field == "note" else "tags"
+    if isinstance(change, ParamChange):
+        return "parameter"
     return "change"
 
 
@@ -215,6 +227,8 @@ class EmorphedApp(App[None]):
         Binding("V", "rating_filter", "Rating filter"),
         Binding("z", "undo", "Undo"),
         Binding("Z", "undo_all", "Undo all"),
+        Binding("w", "toggle_write_gate", "Write gate"),
+        Binding("m", "midimap_edit", "Midimap edit"),
         Binding("slash", "search", "Search"),
         Binding("i", "device_info", "Device"),
         Binding("question_mark", "help", "Help"),
@@ -233,6 +247,7 @@ class EmorphedApp(App[None]):
         live_names_path: str | None = None,
         demo: bool = False,
         offer_scan: bool = False,
+        allow_write: bool = False,
     ) -> None:
         super().__init__()
         #: Everything ``z`` can reverse, in the order it happened. Made
@@ -257,6 +272,10 @@ class EmorphedApp(App[None]):
         #: the entrypoint; off by default so a test never gets a modal it
         #: did not ask for.
         self._offer_scan = offer_scan
+        #: Starting state for the write gate.
+        self._allow_write = allow_write
+        #: Whether a midimap backup has succeeded this session.
+        self._midimap_backed_up = False
         #: Raised by the scan modal's Cancel and checked between kinds.
         self._scan_cancel = threading.Event()
         self.view_mode = VIEW_ALL
@@ -315,6 +334,18 @@ class EmorphedApp(App[None]):
     def _push_change(self, change: object) -> None:
         self._undo_log.push(Record(_change_label(change), change))
 
+    @property
+    def _gate(self) -> edmod.EditGate:
+        if getattr(self, "_write_gate", None) is None:
+            self._write_gate = edmod.EditGate(armed=self._allow_write)
+        return self._write_gate
+
+    @property
+    def _editor(self) -> edmod.MidimapEditor:
+        if getattr(self, "_midimap_editor", None) is None:
+            self._midimap_editor = edmod.MidimapEditor(gate=self._gate)
+        return self._midimap_editor
+
     def _undo_gate(self) -> str | None:
         return "busy" if self._busy else None
 
@@ -326,13 +357,241 @@ class EmorphedApp(App[None]):
             or self._exchange.locked()
         )
 
+    def action_toggle_write_gate(self) -> None:
+        self._gate.toggle()
+        self.notify_status(self._gate.describe())
+
+    def action_midimap_edit(self) -> None:
+        """Read the current midimap in a worker, then open the editor."""
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
+        self._read_midimap_worker()
+
+    @work(thread=True)
+    def _read_midimap_worker(self) -> None:
+        """**MIDI only** -- read the current midimap, then open the screen."""
+        failure = None
+        words = None
+        index = 0
+        try:
+            with self._busy_gate:
+                index = getattr(self.device, "current_midimap", 0)
+                words = self.device.read_midimap(index)
+        except _BRIDGE_ERRORS as exc:
+            failure = exc
+        finally:
+            self._exchange.release()
+        if failure is not None:
+            self.call_from_thread(
+                self.notify_status, f"midimap: {failure}", refused=True
+            )
+            return
+        self.call_from_thread(self._open_midimap_screen, index, words)
+
+    def _open_midimap_screen(self, index: int, words: list[int]) -> None:
+        self._current_midimap_index = index
+        self._current_midimap_words = list(words)
+        params = {off: words[off] for off in range(len(words))}
+        from emorphed.midimapui import MidimapEditScreen
+
+        editor = self._editor
+        screen = MidimapEditScreen(
+            editor,
+            params,
+            on_edit=lambda offset, value: self._apply_parameter(offset, value),
+            on_re_read=self.action_midimap_edit,
+            on_undo=lambda count: self._undo_master_edits(count),
+            on_store=self._store_midimap,
+        )
+        self._edit_screen = screen
+        self.push_screen(screen)
+
+    def _apply_parameter(self, offset: int, value: int) -> None:
+        refusal = self._editor.allow(offset, value)
+        if refusal is not None:
+            self.notify_status(refusal, refused=True)
+            top = self.screen
+            if hasattr(top, "say"):
+                try:
+                    top.say(refusal, refused=True)
+                except Exception:  # noqa: S110
+                    pass
+            return
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
+        self._apply_parameter_worker(offset, value)
+
+    @work(thread=True)
+    def _apply_parameter_worker(self, offset: int, value: int) -> None:
+        """**MIDI only**: write, then read back."""
+        failure = None
+        old = None
+        read_back = None
+        try:
+            with self._busy_gate:
+                param_id = mm.PARAM_BASE + offset
+                old = self.device.read_parameter(param_id)
+                self._backup_before_write()
+                self.device.write_parameter(param_id, value)
+                read_back = self.device.read_parameter(param_id)
+        except _BRIDGE_ERRORS as exc:
+            failure = exc
+        finally:
+            self._exchange.release()
+        self.call_from_thread(
+            self._parameter_edited, offset, value, old, read_back, failure
+        )
+
+    def _backup_before_write(self) -> None:
+        if self._midimap_backed_up:
+            return
+        try:
+            index = getattr(self.device, "current_midimap", 0)
+            words = self.device.read_midimap(index)
+            record = bkmod.save_midimap(
+                words,
+                device_id=self.device.device_id,
+                slot=index,
+                directory=self._backup_dir(),
+                source="emorphed (midimap edit)",
+            )
+        except Exception as exc:
+            self.call_from_thread(
+                self.notify_status,
+                f"could not back up the midimap: {exc}",
+                refused=True,
+            )
+            return
+        self._midimap_backed_up = True
+        self.call_from_thread(
+            self.notify_status, f"backed up the midimap as {record.id}"
+        )
+
+    def _backup_dir(self) -> str | None:
+        # config maybe; keep None default under data dir
+        return None
+
+    def _parameter_edited(
+        self,
+        offset: int,
+        value: int,
+        old: int | None,
+        read_back: int | None,
+        failure: BaseException | None,
+    ) -> None:
+        if failure is not None:
+            sentence = f"offset {offset}: {failure}"
+            ok = False
+        else:
+            rb = read_back if read_back is not None else 0
+            old_val = old if old is not None else value
+            ok, sentence = self._editor.finish(offset, value, rb, old=old_val)
+            if ok:
+                self._push_change(ParamChange(offset, old_val, value))
+        self.notify_status(sentence, refused=not ok)
+        top = self.screen
+        if hasattr(top, "result"):
+            try:
+                top.result(ok, sentence, parameter_id=offset, value=value)
+            except Exception:  # noqa: S110
+                pass
+        # update current words
+        if ok and getattr(self, "_current_midimap_words", None) is not None:
+            self._current_midimap_words[offset] = value
+
+    def _store_midimap(self) -> None:
+        if not self._midimap_backed_up:
+            self.notify_status(
+                "store refused: no midimap backup this session", refused=True
+            )
+            top = self.screen
+            if hasattr(top, "say"):
+                try:
+                    top.say(
+                        "store refused: no midimap backup this session",
+                        refused=True,
+                    )
+                except Exception:  # noqa: S110
+                    pass
+            return
+        index = getattr(
+            self,
+            "_current_midimap_index",
+            getattr(self.device, "current_midimap", 0),
+        )
+        words = list(getattr(self, "_current_midimap_words", [])) or list(
+            getattr(self.device, "_midimap", [])
+        )
+
+        def answered(text: str | None) -> None:
+            if not text:
+                return
+            try:
+                loc = int(text)
+            except ValueError:
+                self.notify_status(f"{text!r} is not a number", refused=True)
+                return
+            if not 0 <= loc <= 31:
+                self.notify_status("a midimap location is 0-31", refused=True)
+                return
+            self.push_screen(
+                ConfirmScreen(
+                    f"STORE to location {loc}: erases what is there"
+                ),
+                lambda confirmed: self._store_confirmed(loc, words, confirmed),
+            )
+
+        self.push_screen(
+            PromptScreen("Store to midimap location (0-31):", str(index)),
+            answered,
+        )
+
+    def _store_confirmed(
+        self, loc: int, words: list[int], confirmed: bool | None
+    ) -> None:
+        if not confirmed:
+            return
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
+        self._store_midimap_worker(loc, words)
+
+    @work(thread=True)
+    def _store_midimap_worker(self, loc: int, words: list[int]) -> None:
+        failure = None
+        try:
+            with self._busy_gate:
+                self.device.send_midimap(loc, words)
+                _ = self.device.read_midimap(loc)
+        except _BRIDGE_ERRORS as exc:
+            failure = exc
+        finally:
+            self._exchange.release()
+        if failure is not None:
+            self.call_from_thread(
+                self.notify_status, f"store: {failure}", refused=True
+            )
+        else:
+            self.call_from_thread(self.notify_status, f"stored to M{loc:02d}")
+
     def action_undo(self) -> None:
         self._undo_master_edits(1)
 
     def action_undo_all(self) -> None:
         self._undo_master_edits(None)
 
-    def _undo_master_edits(self, count: int | None = None) -> None:  # noqa: C901
+    def _undo_master_edits(self, count: int | None = None) -> None:  # noqa: C901, PLR0912
         taken = self._undo_log.plan(
             len(self._changes) if count is None else count
         )
@@ -347,6 +606,7 @@ class EmorphedApp(App[None]):
         favourites = 0
         ratings = 0
         tags_notes = 0
+        params = 0
         for change in changes:
             if isinstance(change, FavouriteChange):
                 favourites += 1
@@ -357,6 +617,9 @@ class EmorphedApp(App[None]):
             elif isinstance(change, TagNoteChange):
                 tags_notes += 1
                 self._undo_tag_note(change)
+            elif isinstance(change, ParamChange):
+                params += 1
+                self._apply_parameter(change.offset, change.old)
         if self.favorites is not None:
             self._refill_keeping_place()
         parts = []
@@ -370,6 +633,8 @@ class EmorphedApp(App[None]):
             parts.append(
                 f"{tags_notes} tag/note{'s' if tags_notes != 1 else ''}"
             )
+        if params:
+            parts.append(f"{params} parameter{'s' if params != 1 else ''}")
         msg = "undid " + ", ".join(parts) if parts else "undid"
         self.notify_status(msg)
 
@@ -1401,6 +1666,7 @@ def build_parser() -> argparse.ArgumentParser:
         catalog=True,
         config=True,
         favorites=True,
+        allow_write=True,
     )
     parser.add_argument(
         "--live-names",
@@ -1512,6 +1778,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
         or _ln.default_path(),
         demo=args.demo,
         offer_scan=not args.demo,
+        allow_write=args.allow_write,
     )
     try:
         app.run()

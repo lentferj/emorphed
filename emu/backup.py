@@ -54,12 +54,17 @@ from vinsynlib.backup import FORMAT
 __all__ = [
     "APP_NAME",
     "BLOCK",
+    "BLOCK_MIDIMAP",
     "FORMAT",
     "KIND",
+    "KIND_MIDIMAP",
     "Backup",
+    "MidimapBytes",
     "default_dir",
     "list_backups",
     "load",
+    "load_midimap",
+    "save_midimap",
     "save_preset",
 ]
 
@@ -78,6 +83,10 @@ KIND = "preset"
 #: The block name inside the envelope. One block, because one preset is the
 #: whole of what its backup holds.
 BLOCK = "preset"
+
+#: The kind and block for a midimap backup.
+KIND_MIDIMAP = "midimap"
+BLOCK_MIDIMAP = "midimap"
 
 
 @dataclass(frozen=True)
@@ -113,6 +122,10 @@ class PresetBytes(bytes):
     @property
     def words(self) -> list[int]:
         return m.from_words(self)
+
+
+class MidimapBytes(PresetBytes):
+    """A midimap's stored bytes, read back as words."""
 
 
 def _to_bytes(words: Any) -> bytes:
@@ -233,6 +246,50 @@ def save_preset(  # noqa: PLR0913
     return _record(_backup.load(path), os.path.basename(path))
 
 
+def save_midimap(  # noqa: PLR0913
+    words: Any,
+    *,
+    device_id: int | str,
+    slot: Any = None,
+    name: str | None = None,
+    source: str = "emorphed (midimap edit)",
+    directory: str | None = None,
+    index: Any = None,
+    number: Any = None,
+    **_extra: Any,
+) -> Backup:
+    """Write one midimap to the backup directory, and return its record."""
+    if name is None:
+        try:
+            word_list = list(words)
+            if len(word_list) >= m.NAME_CHARS:
+                name = m.decode_name(word_list[: m.NAME_CHARS]).rstrip()
+            else:
+                name = ""
+        except Exception:
+            name = ""
+    if not name:
+        name = ""
+    if slot is None:
+        if index is not None:
+            slot = index
+        elif number is not None:
+            slot = number
+        else:
+            slot = 0
+    data = _to_bytes(words)
+    path = _backup.save(
+        directory or default_dir(),
+        kind=KIND_MIDIMAP,
+        slot=str(slot),
+        name=name,
+        device_id=str(device_id),
+        source=source,
+        blocks={BLOCK_MIDIMAP: data},
+    )
+    return _record(_backup.load(path), os.path.basename(path))
+
+
 def list_backups(directory: str | None = None) -> list[Backup]:
     """Every backup in a directory, newest first.
 
@@ -274,26 +331,55 @@ def list_backups(directory: str | None = None) -> list[Backup]:
     return out
 
 
-def load(ident: str, *, directory: str | None = None) -> PresetBytes:
+def _load_for(
+    ident: str, *, directory: str | None, kind: str | None, block: str
+) -> PresetBytes:
+    record = _backup.load(_resolve(ident, directory))
+    if kind is not None and record.kind != kind:
+        raise ValueError(f"{ident} holds {record.kind!r}, not a {kind} backup")
+    if kind is None and record.kind not in (KIND, KIND_MIDIMAP):
+        raise ValueError(
+            f"{ident} holds {record.kind!r}, not a preset or midimap backup"
+        )
+    block_name = block
+    if record.kind == KIND_MIDIMAP and block_name == BLOCK:
+        block_name = BLOCK_MIDIMAP
+    if record.kind == KIND and block_name == BLOCK_MIDIMAP:
+        block_name = BLOCK
+    frame = record.blocks.get(block_name)
+    if not frame:
+        raise ValueError(f"{ident} carries no {block_name} block")
+    return PresetBytes(frame)
+
+
+def load(
+    ident: str, *, directory: str | None = None, kind: str | None = None
+) -> PresetBytes:
     """Read a backup's own bytes back.
 
     ``ident`` is the name :func:`list_backups` reports, or a full path.
-    The block comes back as :class:`PresetBytes` -- the bytes the envelope
-    holds, which :func:`emu.messages.from_words` turns back into words.
-
-    Refuses a file that is not a preset backup, or that carries no preset
-    block, rather than returning something the caller did not ask for. The
-    envelope's own version check is the library's
-    (:func:`vinsynlib.backup.load`).
-
-    **No restore is offered**: ``emorphed`` has no write path, so these
-    bytes cannot be sent to the unit. They can be inspected or kept,
-    which is the read-only half of a backup.
+    Refuses a file of the wrong kind. The envelope's own version check is
+    the library's (:func:`vinsynlib.backup.load`).
     """
+    if kind is not None:
+        block = BLOCK_MIDIMAP if kind == KIND_MIDIMAP else BLOCK
+        return _load_for(ident, directory=directory, kind=kind, block=block)
+    # No kind given: accept either of this family's own kinds.
     record = _backup.load(_resolve(ident, directory))
-    if record.kind != KIND:
+    if record.kind not in (KIND, KIND_MIDIMAP):
         raise ValueError(f"{ident} holds {record.kind!r}, not a {KIND} backup")
-    frame = record.blocks.get(BLOCK)
+    block = BLOCK if record.kind == KIND else BLOCK_MIDIMAP
+    frame = record.blocks.get(block)
     if not frame:
-        raise ValueError(f"{ident} carries no {BLOCK} block")
+        raise ValueError(f"{ident} carries no {block} block")
+    if record.kind == KIND_MIDIMAP:
+        return MidimapBytes(frame)
     return PresetBytes(frame)
+
+
+def load_midimap(ident: str, *, directory: str | None = None) -> MidimapBytes:
+    """Read a midimap backup's own bytes back."""
+    result = _load_for(
+        ident, directory=directory, kind=KIND_MIDIMAP, block=BLOCK_MIDIMAP
+    )
+    return MidimapBytes(result)
