@@ -356,7 +356,7 @@ class MorpheusBridge:
     ) -> None:
         """Send one Parameter Data frame. Fire-and-forget, no reply.
 
-        ``param`` must be a midimap parameter, 2048-2407 (manual p.264);
+        ``param`` must be a midimap parameter, 2048-2407 (manual pp. 249-250);
         ``value`` is fourteen bits, 0-0x3FFF. Out-of-range values are
         refused; the manual's range is named in the message. ``timeout``
         is accepted for symmetry with the other methods and is unused,
@@ -365,7 +365,7 @@ class MorpheusBridge:
         if not 2048 <= param <= 2407:  # noqa: PLR2004
             raise m.ProtocolError(
                 f"param {param} is outside the midimap parameter range "
-                f"2048-2407 (manual p.264)"
+                f"2048-2407 (manual pp. 249-250)"
             )
         if not 0 <= value <= 0x3FFF:  # noqa: PLR2004
             raise m.ProtocolError(
@@ -384,7 +384,7 @@ class MorpheusBridge:
         Sending a midimap writes the midimap at ``index`` (erasing what
         was there -- manual p.36), and when that location is the
         currently selected one the unit reloads its scratch midimap from
-        the newly stored map (manual p.237). A backup must have been taken
+        the newly stored map (manual p.232). A backup must have been taken
         first; that is the caller's job, and nothing here does it. There is
         no reply to wait for, so ``timeout`` is accepted for symmetry with
         the other methods and is unused.
@@ -408,7 +408,7 @@ class MorpheusBridge:
         if not 2048 <= param <= 2407:  # noqa: PLR2004
             raise m.ProtocolError(
                 f"param {param} is outside the midimap parameter range "
-                f"2048-2407 (manual p.264)"
+                f"2048-2407 (manual pp. 249-250)"
             )
         try:
             words = self.read_midimap(self.current_midimap)

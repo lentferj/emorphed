@@ -192,7 +192,7 @@ class DemoDevice:
         if not 2048 <= param <= 2407:  # noqa: PLR2004
             raise m.ProtocolError(
                 f"param {param} is outside the midimap parameter range "
-                f"2048-2407 (manual p.264)"
+                f"2048-2407 (manual pp. 249-250)"
             )
         if not 0 <= value <= 0x3FFF:  # noqa: PLR2004
             raise m.ProtocolError(

@@ -130,7 +130,7 @@ MIDIMAP_DATA_BYTES = 730
 
 
 #: Master-parameter numbers, from the Operation Manual's parameter table
-#: (page 249): ``264 Midi Mode`` and ``320 Current Midimap``. These are
+#: (pages 249-250): ``264 Midi Mode`` and ``320 Current Midimap``. These are
 #: global, not preset/midimap-offset, parameters -- see the midimap
 #: selection page (159), which is the only place that says so. The manual
 #: calls the three Midi Modes Omni, Poly, Multi and Mono; "Multi" is the

@@ -19,8 +19,8 @@ checked against the parameter list in the sibling edisyn project
 (``EmuMorpheusMap.java``, ``parameters`` array, 360 entries).
 
 The parameter IDs a unit answers for these are ``PARAM_BASE`` (2048) through
-``PARAM_BASE + 359`` (2407), printed on page 249 as "Midimap Vers. 1 Parms".
-A parameter *write* reaches the **scratch** midimap (manual p.237 says a
+``PARAM_BASE + 359`` (2407), printed on page 250 as "Midimap Vers. 1 Parms".
+A parameter *write* reaches the **scratch** midimap (manual p.232 says a
 map loaded into the current location is loaded into the scratch map, and
 permanence needs a store). This module is the read/parse/display side only;
 it does not write to the instrument.
@@ -232,7 +232,7 @@ _entries.append(Param(359, "FX B Bus", 0, 2, _FX_BUS, _PARAM_MANUAL))
 
 PARAMS: tuple[Param, ...] = tuple(_entries)
 
-#: Base parameter number for the whole Midimap block (manual p.249).
+#: Base parameter number for the whole Midimap block (manual p.250).
 PARAM_BASE = 2048
 
 _BY_OFFSET: dict[int, Param] = {param.offset: param for param in PARAMS}
