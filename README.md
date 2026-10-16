@@ -176,6 +176,17 @@ environment is active. `python -m emorphed` does not: the package has no
 `__main__`, by the family's convention that the console scripts are the
 entry points.
 
+**Two speeds of connect.** Plain `emorphed` asks the port and device ID
+remembered in `config.toml` with **one** Version Request — measured at
+**0.09 s** (round it to ~0.1 s). `--scan` throws that away and sweeps: every
+output port × **16** device IDs, each probe up to **0.4 s**. On the bench
+host that is **41 ports**, so a device-7 unit is reached on the eighth ID
+pass in **~2.2 min**, and the worst case is `41 × 16 × 0.4 s` ≈ **~4.4 min**.
+The sweep is only needed when the port or the device ID has changed. When it
+has, don't pay it: `emorphed --port "<port>" --device-id 7` (or
+`morphcli … status`) opens that port directly, remembers both, and makes the
+next plain run instant. The full cost note is TODO item 1.
+
 `read` checks every dump's checksum, so it can tell you a file is
 *damaged* rather than only that it is the wrong length.
 

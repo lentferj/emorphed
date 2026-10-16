@@ -88,8 +88,20 @@ framing is the open question.
 * `morphcli read` against a bank request, to see whether the reply arrives
   in one message or several
 
-Then `autodetect`, whose sweep over sixteen device IDs times every port
-has never been run and may well be too slow to be pleasant.
+Then `autodetect`, whose sweep over sixteen device IDs times every port.
+**The cost note for this item — measured 2026-10-16** (bench host, ~41
+ports): the full sweep is **41 ports × 16 device IDs × 0.4 s per probe**.
+It asks the requested/remembered device ID first across the ports, then 0,
+then the rest, so a device-7 unit is reached on the eighth ID pass in
+**~2.2 min**; the worst case is **~4.4 min**. What changed with the
+measurement: the sweep now probes the requested/remembered device ID across
+the ports before falling back to 0 and the rest, the remembered port is
+tried first (one Version Request), one progress line is printed per port,
+and an elapsed summary follows the run. The fast path — the remembered port
+and device ID — is measured at **0.09 s** (~0.1 s), so `--scan` is only for
+when the port or the device ID has changed; `--port "<port>" --device-id 7`
+(or `morphcli … status`) opens directly, remembers both, and makes the next
+plain run instant. The README carries the one-paragraph version.
 
 **Not blocked any more.** The bench talked to the unit on 2026-10-15:
 Version Request, configuration, one preset read and a bank request all
@@ -116,8 +128,19 @@ matching. So the unit *does* answer a bank request, but the format is
 unexplained and **the app does not use bank requests** -- `morphcli
 read`/`backup` walk presets one at a time instead.
 
-`autodetect`, whose sweep over sixteen device IDs times every port, has
-still never been run and may well be too slow to be pleasant.
+**No Universal Identity Reply (2026-10-16).** The family's connect policy in
+`vinsynlib` is built around the Universal Identity Request (`F0 7E 7F 06 01
+F7`): one broadcast to every port identifies the instrument in one round
+trip. **The Morpheus does not answer it.** Broadcast device `0x7F` and device
+`7` were both sent, and both were silent; as a control the E-mu Version
+Request (`F0 18 0C 07 0A F7`) answered in **~6 ms**. So the family's identity
+fast path is unavailable on this instrument, and identification has to go
+through the Version Request at each device ID — a **documented divergence,
+not an oversight**. It is also why `--scan` here is a per-port, per-ID
+Version sweep rather than a single identity probe.
+
+`autodetect` has now been measured — see the cost note at the top of this
+item.
 
 The bench is built (T9, `581c4ed`: `tests/test_hardware.py`,
 `tests/conftest.py`, `make test-hardware`); a human ran it 2026-10-15
