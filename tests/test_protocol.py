@@ -184,6 +184,28 @@ class TestTheMemoryMap:
         assert writable == {"P-RAM", "H-RAM", "M-RAM"}
 
 
+class TestBankSelectTableMeasured20261016:
+    """The 2026-10-16 bench measured the Bank Select mapping."""
+
+    def test_the_table_is_exactly_as_measured(self) -> None:
+        assert banks.BANK_SELECT == {
+            "P-RAM": 0,
+            "P-ROM": 1,
+            "H-RAM": 2,
+            "P-CARD": 3,
+            "H-CARD": 4,
+        }
+        # A midimap has no bank at all: Bank Select cannot reach one.
+        assert "M-RAM" not in banks.BANK_SELECT
+        assert "M-CARD" not in banks.BANK_SELECT
+
+    def test_midimap_has_no_bank(self) -> None:
+        with pytest.raises(LookupError):
+            banks.bank_select_bank("M-RAM")
+        with pytest.raises(LookupError):
+            _ = banks.slots("M-RAM")[0].bank_select
+
+
 class TestSelecting:
     def test_controller_32_carries_the_bank(self) -> None:
         """The manual's own sequence: Bn 00 00 20 bb Cn pp."""
@@ -205,6 +227,38 @@ class TestSelecting:
     def test_the_channel_lands_in_every_status_byte(self) -> None:
         out = banks.select_messages(banks.slot("P-RAM", 1), channel=9)
         assert all((x[0] & 0x0F) == 9 for x in out)
+
+
+class TestSelectingNewMapping:
+    def test_p_card_slot_index_256_sends_cc32_3_pc_0(self) -> None:
+        out = banks.select_messages(banks.slot("P-CARD", 0))
+        assert [list(x) for x in out] == [
+            [0xB0, 0x00, 0x00],
+            [0xB0, 0x20, 3],
+            [0xC0, 0],
+        ]
+
+    def test_p_card_index_261_sends_pc_5(self) -> None:
+        out = banks.select_messages(banks.slot("P-CARD", 5))
+        assert list(out[2]) == [0xC0, 5]
+        assert list(out[1]) == [0xB0, 0x20, 3]
+
+    def test_h_ram_slot_0_sends_cc32_2(self) -> None:
+        out = banks.select_messages(banks.slot("H-RAM", 0))
+        assert list(out[1]) == [0xB0, 0x20, 2]
+        assert list(out[2]) == [0xC0, 0]
+
+    def test_h_card_index_128_sends_cc32_4_pc_0(self) -> None:
+        out = banks.select_messages(banks.slot("H-CARD", 0))
+        assert [list(x) for x in out] == [
+            [0xB0, 0x00, 0x00],
+            [0xB0, 0x20, 4],
+            [0xC0, 0],
+        ]
+
+    def test_midimap_still_refuses(self) -> None:
+        with pytest.raises(LookupError, match="no Bank Select bank"):
+            banks.select_messages(banks.slot("M-RAM", 0))
 
 
 class TestNameLists:

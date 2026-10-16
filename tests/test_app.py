@@ -344,8 +344,8 @@ class TestOnlyPresetsAreSelected:
             assert len(demo.selected_log) == 1
 
 
-class TestHyperpresetStillRefused:
-    async def test_enter_on_a_hyperpreset_refuses(
+class TestHyperpresetSelectable:
+    async def test_enter_on_a_hyperpreset_selects(
         self, app: EmorphedApp, device: DemoDevice
     ) -> None:
         async with app.run_test() as pilot:
@@ -354,18 +354,13 @@ class TestHyperpresetStillRefused:
             await pilot.pause()
             app.query_one("#slot-table").focus()
             await pilot.pause()
-            said = _capture(app)
+            _capture(app)
             await pilot.press("enter")
             for _ in range(8):
                 await pilot.pause()
-            refusal = (
-                "a hyperpreset is not selected with a program change; "
-                "only presets are",
-                True,
-            )
-            assert refusal in said
+            assert len(device.selected_log) == 1
+            assert device.selected_log[0][0].kind == banks.Kind.HYPERPRESET
             assert device.selected_midimaps == []
-            assert device.selected_log == []
 
 
 class TestReadingNames:

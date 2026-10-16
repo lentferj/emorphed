@@ -126,7 +126,7 @@ def _cmd_select(device: Device, args: argparse.Namespace) -> int:
     device.select(target)
     print(
         f"selected {target.display} — Bank Select 32 = "
-        f"{banks.bank_of(target.kind, target.index)}, Program Change "
+        f"{banks.bank_select_bank(target.bank_id)}, Program Change "
         f"{target.program_change}"
     )
     print(

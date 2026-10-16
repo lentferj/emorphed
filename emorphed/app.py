@@ -834,7 +834,12 @@ class EmorphedApp(App[None]):
                 "Exclusive is the only way[/dim]"
             )
         else:
-            how = "[dim]selected as a preset in the hyperpreset range[/dim]"
+            bank = banks.bank_select_bank(entry.bank_id)
+            how = (
+                f"Bank Select (CC32) [b]{bank}[/b] · Program Change "
+                f"[b]{entry.number}[/b] [dim](under the default "
+                f"Program Map)[/dim]"
+            )
         self.query_one("#detail", Static).update(
             f"[b]{entry.display}[/b]  {name}   [dim]index "
             f"{entry.index}[/dim]\n{how} · {source}"
@@ -899,16 +904,6 @@ class EmorphedApp(App[None]):
             self.notify_status("busy", refused=True)
             return
         entry = self._current[row]
-        if entry.kind == banks.Kind.HYPERPRESET:
-            # Refused here rather than in the worker, so that nothing is
-            # sent at all. A hyperpreset is selected as a preset in the
-            # hyperpreset range, not over this exchange.
-            self.notify_status(
-                f"a {entry.kind} is not selected with a program change; "
-                f"only presets are",
-                refused=True,
-            )
-            return
         if entry.kind == banks.Kind.MIDIMAP:
             # A midimap has no program change, but it can be made current
             # over System Exclusive -- two frames, per the manual's
@@ -916,10 +911,13 @@ class EmorphedApp(App[None]):
             # confirmation before anything is sent.
             self._confirm_midimap(entry)
             return
-        if entry.kind != banks.Kind.PRESET:
+        if entry.kind not in (
+            banks.Kind.PRESET,
+            banks.Kind.HYPERPRESET,
+        ):
             self.notify_status(
                 f"a {entry.kind} is not selected with a program change; "
-                f"only presets are",
+                f"only presets and hyperpresets are",
                 refused=True,
             )
             return
@@ -971,7 +969,7 @@ class EmorphedApp(App[None]):
         self.call_from_thread(
             self.notify_status,
             f"selected {entry.display} — Bank Select (CC32) "
-            f"{banks.bank_of(entry.kind, entry.index)} then Program Change "
+            f"{banks.bank_select_bank(entry.bank_id)} then Program Change "
             f"{entry.number} on channel {self.device.channel + 1}; "
             f"that number reaches it under the default Program Map",
         )
@@ -1312,9 +1310,9 @@ not failing.
 Numbers
 
 An *index* is what SysEx addresses. A *program change* is what selects,
-and only for presets -- a Program Map sits between the two, so the number
-shown is the one that works under the default map. Bank Select is
-Controller 32 with Controller 0 held at zero.
+and for presets and hyperpresets -- a Program Map sits between the
+two, so the number shown is the one that works under the default map.
+Bank Select is Controller 32 with Controller 0 held at zero.
 
 Names
 
@@ -1326,7 +1324,8 @@ Keys
 
   ↑↓        move; this never sends anything
   tab       switch pane
-  ⏎         select on the unit -- presets, or a midimap (confirms)
+  ⏎         select on the unit -- presets and hyperpresets, or a
+            midimap (confirms)
   r         read every name of this kind (silent, one message)
   /         search the names
   [ ]       previous / next MIDI channel

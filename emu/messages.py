@@ -114,6 +114,11 @@ NAME_CHARS = 12
 #: object. Banks are blocks of 128 presets, 128 hyperpresets or 16
 #: midimaps -- the size depends on what is being asked for, which is why
 #: :mod:`emu.banks` owns that and this does not.
+#:
+#: This is the SysEx REQUEST numbering (manual p.226: "0x0400 + the
+#: bank number (0-2)" for presets). It is NOT the Bank Select
+#: (Controller 32) numbering (0-4, manual p.159), which lives in
+#: :data:`emu.banks.BANK_SELECT`.
 BANK_REQUEST_BASE = 0x0400
 
 #: Message sizes seen in every one of 2752 dumps from real instruments,

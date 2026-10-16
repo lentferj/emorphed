@@ -52,6 +52,7 @@ from dataclasses import dataclass
 from emu import messages as m
 
 __all__ = [
+    "BANK_SELECT",
     "HYPERS_PER_BANK",
     "MIDIMAPS_PER_BANK",
     "PRESETS_PER_BANK",
@@ -62,10 +63,12 @@ __all__ = [
     "Slot",
     "bank_of",
     "bank_request",
+    "bank_select_bank",
     "kinds_of",
     "region",
     "region_ids",
     "regions",
+    "request_bank",
     "select_messages",
     "slot",
     "slots",
@@ -261,6 +264,55 @@ class Slot:
         """
         return self.number
 
+    @property
+    def bank_select(self) -> int:
+        """Bank Select (Controller 32) bank from the measured table."""
+        try:
+            return BANK_SELECT[self.region.id]
+        except KeyError:
+            raise LookupError(
+                f"{self.region.id} has no Bank Select bank: midimaps are "
+                f"selected over System Exclusive, not with a program change"
+            ) from None
+
+    bank_select_bank = bank_select
+    select_bank = bank_select
+
+
+#: Fixed table: the Bank Select (Controller 32) bank for each
+#: region that has one, measured on the unit on 2026-10-16. Two
+#: numbering systems were conflated before that: the SysEx request side
+#: uses 0x0400+bank (presets 0-2) while Bank Select uses 0-4 as below.
+#: Kinds of containers are fixed tables, never arithmetic.
+BANK_SELECT: dict[str, int] = {
+    "P-RAM": 0,
+    "P-ROM": 1,
+    "H-RAM": 2,
+    "P-CARD": 3,
+    "H-CARD": 4,
+}
+
+
+def bank_select_bank(*args: object, **kwargs: object) -> int:
+    """Look up the Bank Select bank for a region."""
+    rid: str | None = None
+    for key in ("region_id", "bank_id", "kind"):
+        value = kwargs.get(key)
+        if isinstance(value, str):
+            rid = value
+            break
+    if rid is None:
+        for value in args:
+            if isinstance(value, str):
+                rid = value
+                break
+    if rid not in BANK_SELECT:
+        raise LookupError(
+            f"no Bank Select bank for {rid!r}; have "
+            f"{', '.join(BANK_SELECT)} (midimaps have none -- SysEx only)"
+        )
+    return BANK_SELECT[rid]
+
 
 def regions(kind: str | None = None) -> list[Region]:
     return [r for r in REGIONS if kind is None or r.kind == kind]
@@ -298,9 +350,19 @@ def slot(region_id: str, number: int) -> Slot:
     return Slot(entry, entry.first + number)
 
 
-def bank_of(kind: str, index: int) -> int:
-    """Which bank an index falls in, for a bank request."""
+def request_bank(kind: str, index: int) -> int:
+    """Which bank an **index** falls in, for a SysEx bank REQUEST.
+
+    The 0x0400+bank numbering from manual page 226: presets only,
+    0-2 (RAM / ROM / CARD), banks of 128. Separate from
+    :data:`BANK_SELECT` (0-4). Do not use for a CC32 byte.
+    """
+    if kind not in Kind.ALL:
+        raise LookupError(f"no kind {kind!r}; have {', '.join(Kind.ALL)}")
     return index // Kind.PER_BANK[kind]
+
+
+bank_of = request_bank
 
 
 def bank_request(kind: str, bank: int, *, device: int = 0) -> bytes:
@@ -326,19 +388,27 @@ def select_messages(target: Slot, channel: int = 0) -> list[bytes]:
     sending only the program change leaves the bank wherever it was --
     possibly somewhere a sequencer put it.
 
-    Only presets can be reached this way. A midimap has no program
-    number at all and a hyperpreset is selected as a preset in the
-    hyperpreset bank, so this refuses anything else rather than sending
-    a program change that would land somewhere unrelated.
+    Presets and hyperpresets are selected this way. A midimap has no
+    program number at all -- manual page 159, System Exclusive is the
+    only way -- so this refuses a midimap rather than sending a
+    program change that would land somewhere unrelated. The bank byte
+    comes from the fixed :data:`BANK_SELECT` table, never from
+    arithmetic.
     """
-    if target.kind != Kind.PRESET:
+    if target.kind == Kind.MIDIMAP:
+        raise LookupError(
+            f"a {target.kind} is not selected with a program change: it "
+            f"has no Bank Select bank and is made current over System "
+            f"Exclusive"
+        )
+    if target.kind not in (Kind.PRESET, Kind.HYPERPRESET):
         raise LookupError(
             f"a {target.kind} is not selected with a program change; only "
-            f"presets are"
+            f"presets and hyperpresets are"
         )
     if not 0 <= channel <= 15:
         raise ValueError(f"channel {channel} is outside 0-15")
-    bank = bank_of(Kind.PRESET, target.index)
+    bank = BANK_SELECT[target.region.id]
     status = 0xB0 | channel
     return [
         bytes([status, 0x00, 0x00]),
