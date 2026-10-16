@@ -49,6 +49,7 @@ rather than as a fault.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
 import threading
 from collections.abc import Sequence
@@ -160,6 +161,20 @@ class ParamChange:
     new: int
 
 
+@dataclass(frozen=True)
+class NameChange:
+    """One midimap name write: twelve parameters (offsets 0-11).
+
+    Carried as a single undo record so that one `z` restores the
+    whole previous name; a per-character record would leave the
+    other eleven characters behind. The old and new texts are the
+    names before and after, each already padded to twelve chars.
+    """
+
+    old_text: str
+    new_text: str
+
+
 class _ChangesView(list[Any]):
     def __init__(self, log: UndoLog, changes: list[Any]) -> None:
         super().__init__(changes)
@@ -181,6 +196,8 @@ def _change_label(change: object) -> str:
         return "note" if field == "note" else "tags"
     if isinstance(change, ParamChange):
         return "parameter"
+    if isinstance(change, NameChange):
+        return "name"
     return "change"
 
 
@@ -377,9 +394,13 @@ class EmorphedApp(App[None]):
         failure = None
         words = None
         index = 0
+        assumed = False
         try:
             with self._busy_gate:
-                index = getattr(self.device, "current_midimap", 0)
+                cm = getattr(self.device, "current_midimap", None)
+                _cm: int | None = cm
+                assumed = _cm is None
+                index = 0 if assumed else (_cm if _cm is not None else 0)
                 words = self.device.read_midimap(index)
         except _BRIDGE_ERRORS as exc:
             failure = exc
@@ -390,25 +411,213 @@ class EmorphedApp(App[None]):
                 self.notify_status, f"midimap: {failure}", refused=True
             )
             return
-        self.call_from_thread(self._open_midimap_screen, index, words)
+        self.call_from_thread(self._open_midimap_screen, index, words, assumed)
 
-    def _open_midimap_screen(self, index: int, words: list[int]) -> None:
+    def _re_read_midimap_scratch(self) -> None:
+        """Re-read the scratch map (r inside the editor)."""
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    top.say("busy", refused=True)
+            return
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
+        self._read_midimap_scratch_worker()
+
+    @work(thread=True)
+    def _read_midimap_scratch_worker(self) -> None:
+        """**MIDI only** -- 360 Parameter Requests against the scratch map."""
+        failure = None
+        values: list[int | None] | None = None
+        try:
+            with self._busy_gate:
+                values = self.device.read_scratch_params()
+        except _BRIDGE_ERRORS as exc:
+            failure = exc
+        finally:
+            self._exchange.release()
+        if failure is not None:
+            self.call_from_thread(
+                self.notify_status, f"re-read scratch: {failure}", refused=True
+            )
+            top = getattr(self, "_edit_screen", None)
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    self.call_later(
+                        top.say, f"re-read scratch: {failure}", refused=True
+                    )
+            return
+        if values is None:
+            return
+        silent = sum(v is None for v in values)
+        self.call_from_thread(self._finish_re_read_scratch, values, silent)
+
+    def _finish_re_read_scratch(self, values: list[Any], silent: int) -> None:
+        top = getattr(self, "_edit_screen", None)
+        # Update the screen cell-by-cell so rows that stayed silent keep
+        # their previous value rather than disappearing.
+        if top is not None and hasattr(top, "result"):
+            for off, v in enumerate(values):
+                if v is None:
+                    continue
+                with contextlib.suppress(Exception):
+                    top.result(True, "", parameter_id=off, value=v)
+        if getattr(self, "_current_midimap_words", None) is not None:
+            for off, v in enumerate(values):
+                if v is not None:
+                    self._current_midimap_words[off] = v
+        msg = (
+            "re-read the scratch (360 parameter requests); "
+            f"{silent} did not answer"
+        )
+        if top is not None and hasattr(top, "say"):
+            with contextlib.suppress(Exception):
+                top.say(msg)
+        self.notify_status(msg)
+
+    def _open_midimap_screen(
+        self, index: int, words: list[int], assumed: bool = False
+    ) -> None:
         self._current_midimap_index = index
         self._current_midimap_words = list(words)
         params = {off: words[off] for off in range(len(words))}
+        import inspect
+
         from emorphed.midimapui import MidimapEditScreen
 
         editor = self._editor
-        screen = MidimapEditScreen(
-            editor,
-            params,
-            on_edit=lambda offset, value: self._apply_parameter(offset, value),
-            on_re_read=self.action_midimap_edit,
-            on_undo=lambda count: self._undo_master_edits(count),
-            on_store=self._store_midimap,
-        )
+
+        def _on_edit(offset: int, value: int) -> None:
+            self._apply_parameter(offset, value)
+
+        def _on_undo(count: int | None) -> None:
+            self._undo_master_edits(count)
+
+        ui_kwargs: dict[str, Any] = {
+            "on_edit": _on_edit,
+            "on_re_read": self._re_read_midimap_scratch,
+            "on_undo": _on_undo,
+            "on_store": self._store_midimap,
+        }
+        # The parallel midimapui agent is adding on_name(text); wire it when
+        # available and otherwise stay compatible with the old screen.
+        if (
+            "on_name"
+            in inspect.signature(MidimapEditScreen.__init__).parameters
+        ):
+            ui_kwargs["on_name"] = self._apply_midimap_name
+
+        screen = MidimapEditScreen(editor, params, **ui_kwargs)
         self._edit_screen = screen
         self.push_screen(screen)
+        if assumed:
+            msg = f"midimap {index} (assumed -- nothing selected this session)"
+            self.call_later(screen.say, msg)
+            self.notify_status(msg)
+        else:
+            self.call_later(screen.say, f"stored map (midimap {index})")
+
+    def _apply_midimap_name(self, text: str) -> None:
+        """Write a midimap name through twelve parameter writes."""
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
+        self._write_midimap_name_worker(text)
+
+    def _apply_name_text(self, text: str) -> None:
+        """Restore a name (undo path): writes without a new undo record."""
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
+        self._write_midimap_name_worker(text, record=False)
+
+    @work(thread=True)
+    def _write_midimap_name_worker(
+        self, text: str, record: bool = True
+    ) -> None:
+        """**MIDI only**: twelve writes, twelve reads, report agreement."""
+        failure = None
+        agreed = False
+        mismatch = 0
+        new_text = text
+        try:
+            with self._busy_gate:
+                words = list(
+                    getattr(self, "_current_midimap_words", None) or [0] * 360
+                )
+                if len(words) < 360:
+                    words = words + [0] * (360 - len(words))
+                old_text = mm.name_of(words)
+                new_words = mm.set_name(words, text)
+                for off in range(12):
+                    self.device.write_parameter(
+                        mm.PARAM_BASE + off, new_words[off]
+                    )
+                read_back = [
+                    self.device.read_parameter(mm.PARAM_BASE + off)
+                    for off in range(12)
+                ]
+                expected = new_words[:12]
+                agreed = read_back == expected
+                mismatch = sum(
+                    1
+                    for a, b in zip(read_back, expected, strict=True)
+                    if a != b
+                )
+                new_text = mm.name_of(new_words)
+                if getattr(self, "_current_midimap_words", None) is not None:
+                    for off in range(12):
+                        self._current_midimap_words[off] = new_words[off]
+                if record:
+                    self._push_change(NameChange(old_text, new_text))
+        except _BRIDGE_ERRORS as exc:
+            failure = exc
+        finally:
+            self._exchange.release()
+        if failure is not None:
+            self.call_from_thread(
+                self.notify_status, f"name: {failure}", refused=True
+            )
+            return
+        self.call_from_thread(
+            self._finish_name_write, new_text, agreed, mismatch
+        )
+
+    def _finish_name_write(
+        self, new_text: str, agreed: bool, mismatch: int
+    ) -> None:
+        top = getattr(self, "_edit_screen", None)
+        if top is None:
+            top = self.screen
+        if (
+            top is not None
+            and hasattr(top, "update_params")
+            and getattr(self, "_current_midimap_words", None) is not None
+        ):
+            words = self._current_midimap_words
+            params = {off: words[off] for off in range(len(words))}
+            with contextlib.suppress(Exception):
+                top.update_params(params)
+        if agreed:
+            msg = f"name written: {new_text!r}; read-back agreed (12/12)"
+        else:
+            msg = (
+                f"name written: {new_text!r}; read-back disagreed "
+                f"({12 - mismatch}/12)"
+            )
+        if top is not None and hasattr(top, "say"):
+            with contextlib.suppress(Exception):
+                top.say(msg)
+        self.notify_status(msg)
 
     def _apply_parameter(self, offset: int, value: int) -> None:
         refusal = self._editor.allow(offset, value)
@@ -454,7 +663,8 @@ class EmorphedApp(App[None]):
         if self._midimap_backed_up:
             return
         try:
-            index = getattr(self.device, "current_midimap", 0)
+            _cm = getattr(self.device, "current_midimap", None)
+            index = 0 if _cm is None else _cm
             words = self.device.read_midimap(index)
             record = bkmod.save_midimap(
                 words,
@@ -507,7 +717,7 @@ class EmorphedApp(App[None]):
         if ok and getattr(self, "_current_midimap_words", None) is not None:
             self._current_midimap_words[offset] = value
 
-    def _store_midimap(self) -> None:
+    def _store_midimap(self) -> None:  # noqa: C901
         if not self._midimap_backed_up:
             self.notify_status(
                 "store refused: no midimap backup this session", refused=True
@@ -522,11 +732,11 @@ class EmorphedApp(App[None]):
                 except Exception:  # noqa: S110
                     pass
             return
-        index = getattr(
-            self,
-            "_current_midimap_index",
-            getattr(self.device, "current_midimap", 0),
-        )
+        _idx = getattr(self, "_current_midimap_index", None)
+        if _idx is None:
+            _cm = getattr(self.device, "current_midimap", None)
+            _idx = 0 if _cm is None else _cm
+        index = _idx
         words = list(getattr(self, "_current_midimap_words", []))
         if not words:
             try:
@@ -610,6 +820,7 @@ class EmorphedApp(App[None]):
         ratings = 0
         tags_notes = 0
         params = 0
+        names = 0
         for change in changes:
             if isinstance(change, FavouriteChange):
                 favourites += 1
@@ -623,6 +834,9 @@ class EmorphedApp(App[None]):
             elif isinstance(change, ParamChange):
                 params += 1
                 self._apply_parameter(change.offset, change.old)
+            elif isinstance(change, NameChange):
+                names += 1
+                self._apply_name_text(change.old_text)
         if self.favorites is not None:
             self._refill_keeping_place()
         parts = []
@@ -638,6 +852,8 @@ class EmorphedApp(App[None]):
             )
         if params:
             parts.append(f"{params} parameter{'s' if params != 1 else ''}")
+        if names:
+            parts.append(f"{names} name{'s' if names != 1 else ''}")
         msg = "undid " + ", ".join(parts) if parts else "undid"
         self.notify_status(msg)
 

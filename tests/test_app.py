@@ -26,7 +26,7 @@ from typing import Any, cast
 
 import pytest
 from textual.pilot import Pilot
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Static
 from textual.worker import WorkerFailed
 
 from emorphed.app import VIEW_ALL_FAVOURITES, EmorphedApp
@@ -677,6 +677,9 @@ class TestMidimapAppWriteGateAndStore:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.query_one("#midimap-table", DataTable).move_cursor(
+                row=1, column=2
+            )
             said: list[tuple[str, bool]] = []
             original_say = screen.say
 
@@ -718,6 +721,9 @@ class TestMidimapAppWriteGateAndStore:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.query_one("#midimap-table", DataTable).move_cursor(
+                row=1, column=2
+            )
             screen.action_toggle_write_gate()
             before = len(device.parameter_writes)
             screen.action_nudge_up()
@@ -766,6 +772,9 @@ class TestMidimapAppWriteGateAndStore:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.query_one("#midimap-table", DataTable).move_cursor(
+                row=1, column=2
+            )
             screen.action_toggle_write_gate()
             await pilot.pause()
             before = len(device.parameter_writes)
@@ -839,3 +848,94 @@ class TestStartupSaysWhereTheNamesCameFrom:
             "1 names from the catalog" in m and "1 read from the unit" in m
             for m in messages
         ), messages
+
+
+class TestMidimapCurrentIndexAndScratch:
+    async def test_current_midimap_none_then_number(
+        self, device: DemoDevice
+    ) -> None:
+        assert device.current_midimap is None
+        device.select_midimap(7)
+        assert device.current_midimap == 7
+
+    async def test_editor_open_assumed_when_none(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        assert device.current_midimap is None
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            messages = [m for m, _ in said]
+            assert any("assumed" in m for m in messages), messages
+
+    async def test_r_re_reads_scratch_not_stored_dump(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        device.write_parameter(2048, 7)
+        device.write_parameter(2049, 42)
+        device.parameter_reads.clear()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            before_reads = len(device.parameter_reads)
+            before_stores = len(device.midimap_stores)
+            screen.action_re_read()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_reads) - before_reads == 360
+            # Not a 0x46 stored dump: no new midimap read/store happened.
+            assert len(device.midimap_stores) == before_stores
+            assert getattr(screen, "_values", {}).get(0) == 7
+            assert getattr(screen, "_values", {}).get(1) == 42
+            said_status = None
+            try:
+                said_status = str(
+                    screen.query_one(".status", Static).renderable
+                )
+            except Exception:
+                said_status = None
+            if said_status is not None:
+                assert (
+                    "re-read the scratch" in said_status
+                    or "did not answer" in said_status
+                )
+
+
+class TestMidimapNameWrite:
+    async def test_name_write_twelve_frames_readback_agreement_and_undo(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            # capture baseline
+            writes_before = len(device.parameter_writes)
+            reads_before = len(device.parameter_reads)
+            said = _capture(app)
+            # old name as twelve question marks (stored map is zeroed)
+            app._apply_midimap_name("Hi there")
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) - writes_before == 12
+            assert len(device.parameter_reads) - reads_before == 12
+            # status reports agreement
+            messages = [m for m, _ in said]
+            assert any("agree" in m for m in messages), messages
+            # values reflect name
+            assert screen._values.get(0) == ord("H")
+            assert screen._values.get(1) == ord("i")
+            # undo restores
+            writes_before2 = len(device.parameter_writes)
+            app.action_undo()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) - writes_before2 == 12

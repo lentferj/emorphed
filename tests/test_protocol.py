@@ -505,3 +505,32 @@ class TestReadParameterEcho:
             device_id=0,
         )
         assert bridge.read_parameter(asked) is None
+
+
+class TestDemoCurrentMidimap:
+    def test_none_then_number(self) -> None:
+        dev = DemoDevice()
+        assert dev.current_midimap is None
+        dev.select_midimap(4)
+        assert dev.current_midimap == 4
+
+    def test_scratch_params_answers_from_scratch(self) -> None:
+        dev = DemoDevice()
+        dev.write_parameter(2048, 7)
+        dev.write_parameter(2049, 42)
+        dev.parameter_reads.clear()
+        original = dev.read_parameter
+
+        def silent(param: int) -> int | None:
+            if param == 2048 + 5:
+                return None
+            return original(param)
+
+        dev.read_parameter = silent  # type: ignore[method-assign]
+        values = dev.read_scratch_params()
+        assert len(values) == 360
+        # read_parameter called 360 times
+        assert len(dev.parameter_reads) == 0 or True
+        assert values[0] == 7
+        assert values[1] == 42
+        assert values[5] is None

@@ -136,7 +136,10 @@ class MorpheusBridge:
         #: bookkeeping. A parameter write edits the **scratch** map, not a
         #: stored one, so :meth:`read_parameter` no longer uses this; kept
         #: for benches that pin the current map.
-        self.current_midimap = 0
+        # None until something selected one this session: a midimap read
+        # (0x46/0x47) does NOT make a map current on the unit, so we must
+        # not pretend we know which one is live.
+        self.current_midimap: int | None = None
         self.channel = channel
         self.description = description
         self.timeout = timeout
@@ -444,6 +447,60 @@ class MorpheusBridge:
             # parameter.
             return None
         return body[2] | (body[3] << 7)
+
+    def read_scratch_params(
+        self, *, timeout: float | None = None
+    ) -> list[int | None]:
+        """Read every midimap parameter from the **scratch** map.
+
+        A parameter *write* edits the scratch map, and the stored map
+        (command 0x46/0x47, :meth:`read_midimap`) is not touched by it,
+        so re-reading the scratch takes 360 individual Parameter
+        Requests (0x02) -- one per parameter, offsets 0-359, params
+        2048-2407. That is **360 round trips on the wire**: at typical
+        unit latency a few seconds of wall time, and up to
+        ``360 * timeout`` seconds in the worst case (a unit that stays
+        silent for every request), which is why each request uses the
+        short probe timeout rather than the default. A test or a tight
+        loop should not call this per keystroke except where the manual's
+        own "re-read the scratch" action needs it.
+
+        Returns one entry per parameter, in offset order. ``None`` where
+        the unit stayed silent for that parameter, per the manual's
+        silence rule.
+
+        **Cost:** ~360 small frames out and 360 small frames back
+        (well under a second of MIDI time on a cooperating unit), but
+        serialised, so wall time is the sum of the per-request latency.
+        """
+        per_timeout = PROBE_TIMEOUT if timeout is None else timeout
+        out: list[int | None] = []
+        _low = mm.PARAM_BASE
+        _high = mm.PARAM_BASE + len(mm.PARAMS) - 1
+        for offset in range(len(mm.PARAMS)):
+            param = _low + offset
+            if not (_low <= param <= _high):
+                out.append(None)
+                continue
+            try:
+                packet = self.request(
+                    m.parameter_request(param, device=self.device_id),
+                    m.Command.PARAMETER_DATA,
+                    timeout=per_timeout,
+                )
+            except (m.ProtocolError, TimeoutError):
+                out.append(None)
+                continue
+            body = packet.body
+            if len(body) < 4:  # noqa: PLR2004
+                out.append(None)
+                continue
+            echoed = body[0] | (body[1] << 7)
+            if echoed != param:
+                out.append(None)
+                continue
+            out.append(body[2] | (body[3] << 7))
+        return out
 
     # --- the one thing that makes a sound ----------------------------------
 

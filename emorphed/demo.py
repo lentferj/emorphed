@@ -85,6 +85,10 @@ class DemoDevice:
         self.selected: banks.Slot | None = None
         self.selected_log: list[tuple[banks.Slot, int]] = []
         self.selected_midimaps: list[int] = []
+        self.current_midimap: int | None = None
+        #: Parameter requests observed, in order: param. Mirrors the
+        #: scratch read's round trips so tests can count them.
+        self.parameter_reads: list[int] = []
         #: Midimap parameter writes observed, in order: (param, value).
         self.parameter_writes: list[tuple[int, int]] = []
         #: Midimap stores observed, in order: (index, words).
@@ -173,6 +177,7 @@ class DemoDevice:
                 f"midimap {number} is outside 0-31 (16 RAM + 16 card)"
             )
         self.selected_midimaps.append(number)
+        self.current_midimap = number
 
     # --- midimap reading and parameter writes -------------------------
 
@@ -213,10 +218,20 @@ class DemoDevice:
 
     def read_parameter(self, param: int) -> int | None:
         self._tick()
+        self.parameter_reads.append(param)
         offset = param - 2048
         if not 0 <= offset < len(self._midimap):
             return None
         return self._midimap[offset]
+
+    def read_scratch_params(self) -> list[int | None]:
+        self._tick()
+        out: list[int | None] = []
+        for offset in range(len(self._midimap)):
+            # Answer from the scratch map, via read_parameter, so a
+            # synthetic test counting read_parameter calls sees 360.
+            out.append(self.read_parameter(mm.PARAM_BASE + offset))
+        return out
 
     def send_midimap(
         self, index: int, words: Any, *, timeout: float | None = None

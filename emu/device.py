@@ -39,6 +39,9 @@ class Device(Protocol):
 
     description: str
     device_id: int
+    # None until a midimap is explicitly made current this session; a
+    # stored-map read (0x46/0x47) does not count.
+    current_midimap: int | None
     channel: int
     port: str | None
     recv_port: str | None
@@ -70,4 +73,9 @@ class Device(Protocol):
     def read_parameter(self, param: int) -> int | None:
         # Live scratch-map value via Parameter Request (0x02); NOT the
         # stored midimap dump. See emu.bridge.MorpheusBridge.read_parameter.
+        ...
+
+    def read_scratch_params(self) -> list[int | None]:
+        # Every midimap parameter (2048-2407) via Parameter Request.
+        # See emu.bridge.MorpheusBridge.read_scratch_params.
         ...
