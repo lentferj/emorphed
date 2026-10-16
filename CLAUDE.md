@@ -86,12 +86,13 @@ This is the fact that shapes everything:
 
 ## Hardware rules
 
-- **emorphed has no write path.** That is a design decision, not a gap —
-  TODO item 6 keeps it parked. Nothing you write may send a data write to the
-  unit. Information requests, name requests, data reads, and the Bank Select /
-  Program Change pair from `select_messages` are the hardware suite's entire
-  vocabulary. `select` is the only sound-maker and the hardware suite does
-  not select.
+- **emorphed writes midimap parameters, and nothing else.** Preset Data is
+  never sent; a preset is only read, selected or backed up. The midimap
+  parameter write path is the sole exception, and it is gated (below).
+- **The hardware suite stays read-only.** Its vocabulary is information
+  requests, name requests, data reads, and the Bank Select / Program Change
+  pair from `select_messages`. `select` is the only sound-maker and the
+  hardware suite does not select.
 - **Only one session drives a unit at a time.** Develop and test
   synthetically: `--demo` constructs no bridge and opens no ports.
 - **`PRESET_GAP` is a guess** and is labelled as one. Do not quote it as a
@@ -99,18 +100,35 @@ This is the fact that shapes everything:
 
 ## Writing is fenced (TODO 6)
 
-If a write path is ever added it takes the siblings' shape: a modal
-arm-then-fire screen, never one keystroke from the browser, back up the
-destination first and refuse to proceed if that read fails, name what is
-about to be destroyed, and verify by reading back. Only RAM regions are
-writable, and the unit has one edit buffer per kind that is erased by
-changing which object is current — so a write path must not assume the
-buffer it filled is still there.
+The one write path is **midimap parameters** (2048-2407). It is fenced, and
+each rule below is a rule, not a suggestion:
 
-The backup envelope (`emu/backup.py`, `morphcli backup save|list`) is the
-read-only machinery for that day: it captures a RAM region to an envelope
-without touching the unit's memory. There is deliberately no `restore`
-command.
+- **The gate is locked by default.** `w` arms it; `--allow-write` arms only
+  the *start* state, not every write. A locked gate refuses rather than
+  sends, and the refusal is said in the interface, not swallowed.
+- **Back up before the first write.** The first write reads the whole
+  midimap into the backup envelope (`emu/backup.py`, kind/block "midimap")
+  and refuses to proceed if that read fails.
+- **Every write is read back.** No per-parameter read is documented, so the
+  read-back re-reads the owning map -- one 730-byte reply each time. **Only
+  an agreed read-back is logged**; a value that did not take is reported and
+  not recorded for undo.
+- **The store is named and confirmed.** Sending a whole midimap to a
+  location is the one destructive step: it erases what is there (manual
+  p.36). It goes **arm-then-fire** -- ask for the location, say what is
+  erased, wait for a confirmation -- and it is refused outright without a
+  successful backup this session.
+- **Scratch versus stored.** A parameter write edits the unit's **scratch**
+  midimap: live, not permanent. Only a **store** makes an edit part of a
+  stored location, and loading a stored map into the current location
+  reloads the scratch map from it. Never describe a parameter write as saved.
+- **One session drives the unit.** The write path is human-attended on
+  hardware: the bench that proves it (`tools/bench_midimap_write.py`) refuses
+  without `--yes` and a TTY, and no agent runs it. Develop and test
+  synthetically (`--demo` opens no ports).
+
+Preset writes remain **not offered** -- a preset is read, selected or backed
+up, never written -- and there is still no `restore` command.
 
 ## E-mu's content is not ours to redistribute
 

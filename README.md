@@ -174,6 +174,7 @@ Browser:
 .venv/bin/emorphed --demo              # built-in demo device (no MIDI ports)
 .venv/bin/emorphed --scan              # probe every port and update config.toml
 .venv/bin/emorphed --live-names PATH   # where names read from the unit are kept
+.venv/bin/emorphed --allow-write       # arm the write gate at startup
 ```
 
 `python -m emorphed.cli …` and `python -m emorphed.app …` also work from a
@@ -233,6 +234,18 @@ tags, notes, search, device info. Morpheus-specific:
 - **Undo.** `z` reverses the last favourites/rating/tags/notes change, `Z` all
   of them, restoring previous values. The undo log is the favourites store's
   log, not a separate buffer.
+- **Editing a midimap.** `m` opens the current midimap's own parameters in a
+  modal: one row per word, `+`/`-` to nudge, digits to type, `⏎` to pick a
+  named value from an enumeration, `r` to re-read. Writes are **gated**: the
+  gate is locked by default, `w` arms it (and `--allow-write` arms only the
+  *start* state), and a locked gate refuses rather than sends. The **first**
+  write backs the whole midimap up first and refuses if that read fails;
+  every write is read back, and only an agreed read-back is logged for `z`/`Z`
+  undo. `s` is the **store** -- sending the whole map to a location -- and is
+  **arm-then-fire**: it asks for a location, says what it erases, and waits
+  for a confirmation, and it is refused outright without a backup. What a
+  parameter write changes is the unit's *scratch* midimap, live; only a store
+  makes it permanent.
 - **Live names kept between sessions.** Names read off the unit go into
   `live-names.json` beside the favourites database, so the browser opens on
   your patches rather than the factory list. Override the path with
@@ -252,10 +265,11 @@ tags, notes, search, device info. Morpheus-specific:
 
 Keys (full set): arrows move (never sends anything); tab switches pane; `⏎`
 select on the unit (presets and hyperpresets; a midimap is made current
-over SysEx, behind a confirmation); `r` read names; `/` search; `[`/`]`/`c`
-channel; `d` device ID; `f` favourite; `v` favourites view; `t`/`n` tags/note;
-`*` rating; `V` rating filter; `z`/`Z` undo; `k` kind view; `S` scan; `i`
-device info; `?` help; `q` quit.
+over SysEx, behind a confirmation); `r` read names; `m` midimap edit;
+`w` write gate; `/` search; `[`/`]`/`c` channel; `d` device ID; `f`
+favourite; `v` favourites view; `t`/`n` tags/note; `*` rating; `V` rating
+filter; `z`/`Z` undo; `k` kind view; `S` scan; `i` device info; `?` help;
+`q` quit.
 
 ![Search screen](docs/screenshots/search.png)
 
@@ -291,9 +305,10 @@ no port.
 paced by `PRESET_GAP`) into a backup envelope, behind `--yes` because it
 reads from the unit. `morphcli backup list` shows them newest-first; corrupt
 files are listed with `error`. There is deliberately **no `restore`
-command**: the Morpheus has no write path in emorphed, and TODO item 6
-keeps it that way. `load` exists in `emu/backup.py` for the day writes
-arrive; today only capture is offered.
+command**: presets are never written, and the one write path -- midimap
+*parameters* -- keeps its own backup and read-back instead (TODO item 6).
+`load` exists in `emu/backup.py` for a restore that has not been built;
+today only capture is offered.
 
 ## The bench, real hardware
 
@@ -316,8 +331,14 @@ was settled separately, by the human-attended
 
 ## Honest limits
 
-- **No write path.** Nothing sends a data write to the unit; `select` is the
-  only emitter and plays a preset. `restore` is not offered.
+- **Presets are never written.** Nothing sends Preset Data to the unit;
+  `select` is the only emitter and plays a preset, and `restore` is not
+  offered. Midimap *parameters* can be written, but only behind the gate,
+  after a backup and with a read-back (TODO item 6).
+- **A midimap store is destructive and fenced.** Sending a whole midimap to
+  a location erases what is there (manual p.36). It is arm-then-fire, names
+  the location, needs a confirmation and a backup first -- and it is
+  unverified on hardware, as is the whole write path.
 - **No category filter.** The Morpheus printed catalog carries no categories;
   there is nothing to filter on.
 - **`PRESET_GAP` is a guess** (TODO item 3), labelled as one; the bench

@@ -223,21 +223,44 @@ not need.
 
 Textual is a real dependency again rather than the extra ER-8 made it.
 
-## 6. Nothing writes, and adding a write is a decision
+## 6. Midimap parameters can be edited; presets still cannot
 
-**Status:** open, and the fence is the point.
+**Status:** open — a gated midimap-parameter write path exists; preset
+writes do not, and the fence is still the point.
 
-The protocol can write: Preset Data sent *to* the unit replaces a preset,
-and there are parameter-value commands that edit the current one.
+It is no longer nothing. A midimap's own parameters (2048-2407, the
+manual's "Midimap Vers. 1 Parms") can now be edited through a **gated**
+path: `m` opens the editor, `w` arms the gate (locked by default;
+`--allow-write` arms only the start state), the first write backs the
+whole midimap up (`emu/backup.py`, kind/block "midimap") and refuses to
+proceed if that read fails, every write is read back and **only an agreed
+read-back is logged**, and `z`/`Z` undo through the UndoLog. The store --
+sending a whole `0x47` dump to a location -- is the one destructive step
+and is **arm-then-fire**: it names the location, states that it erases
+what is there, needs a confirmation, and is refused outright without a
+successful backup this session (manual p.36).
 
-If that is ever added it takes the siblings' shape: a modal arm-then-fire
-screen, never one keystroke from the browser, back up the destination
-first and refuse to proceed if that read fails, say what is about to be
-destroyed **by name**, and verify by reading back.
+**Presets still cannot be written.** Preset Data sent *to* the unit would
+replace a preset, and nothing in emorphed sends it; presets are read,
+selected and backed up only. `morphcli` has no write command and there is
+still no `restore`.
+
+The distinction the fence rests on: a parameter write edits the unit's
+**scratch** midimap (live, not permanent); only a **store** makes an edit
+part of a stored location, and a store erases what was there.
 
 Note that only RAM regions are writable at all, and that the unit has one
 edit buffer per kind which is erased by changing which object is current
 -- so a write path must not assume the buffer it filled is still there.
+
+**What remains open:**
+
+* **The store is unverified on hardware.** Nothing has been written to a
+  real unit; the whole path is synthetic until the bench runs.
+* **The human-attended write bench** (`tools/bench_midimap_write.py`) has
+  not been run: back up a midimap, change one benign parameter (a channel
+  volume), read it back and verify, restore the backup. It refuses without
+  `--yes` and a TTY, and no agent runs it.
 
 ## 7. The MidiQuest `.sqs` format is unread — shared across the projects
 
@@ -608,5 +631,6 @@ task shipped.
 
 Deliberate divergences recorded in
 `docs/PROMPT-emorphed-parity.md` (parity contract): no category filter,
-no write path / `--allow-write`, no marked-list or screenshot capture,
+no preset write path (midimap *parameters* are gated behind
+`--allow-write`; TODO item 6), no marked-list or screenshot capture,
 favourites stays on `F`.

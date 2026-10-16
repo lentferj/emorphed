@@ -504,3 +504,103 @@ keeps it zero-based, 6 for display 7) and subtracted one, so it addressed
 the wrong channel and heard silence. The human-answered record above is from
 the corrected tool. Stored channels are not display channels -- a useful
 warning, since the stored value is zero-based and the display is not.
+
+## 22. The midimap editor: parameters are editable, the store is fenced (2026-10-16)
+
+**Source: the plan file `~/temp/emporhed_midimap_editor.txt` and the code
+that landed.** The recipe below is what the plan recorded; the
+"implemented" notes are what the code now does. Nothing here was measured
+on a unit: the whole path is synthetic until the write bench is run.
+
+**The recipe and its sources.**
+
+* Parameters are numbered **2048-2407**, 360 of them. The plan cites the
+  manual's "2048-2407 Midimap Vers. 1 Parms" table at p.264; the landed
+  code cites the same table at the manual's printed page 249
+  (`emu/midimap.py`'s docstring) and again at p.264 (`emu/bridge.py`), so
+  the page cite differs between the plan and the code. **360 = (730 - 10) /
+  2**: the midimap data message is 730 bytes -- a ten-byte frame around 360
+  fourteen-bit words -- the same count `messages.MIDIMAP_DATA_BYTES` and
+  `parse_dump` use.
+* **Write one parameter:** command `0x03`, `param = 2048 + offset`, value
+  fourteen bits low-seven-first (`emu/messages.py` `parameter_data`;
+  `MorpheusBridge.write_parameter` validates `2048 <= param <= 2407`). It
+  edits the **scratch** map (the plan cites manual p.237; the manual's own
+  wording -- the scratch map is reached by individual parameter requests,
+  and a stored map loaded into the current location reloads the scratch map
+  from it -- sits on the Midimap Request and Midimap Data pages).
+* **Read the whole map:** command `0x46` (Midimap Request), answered by a
+  `0x47` Midimap Data dump of 360 words (`bridge.read_midimap`; a body
+  shorter than 360 words raises with the manual's no-card wording, the
+  case for midimaps 16-31).
+* **Store:** sending a `0x47` dump **writes that location and erases what
+  was there**. The plan cites the manual's "Save Midimap" text on **p.36**:
+  "Changes made to a Midimap are not made permanent until the Midimap is
+  Saved ... Writing to a Midimap location erases the existing Midimap in
+  that location." `bridge.send_midimap` is that store, and says so in its
+  own docstring. Hence the fence below.
+
+**The offset table itself** is the manual's "Midimap Data ... Offset /
+Name / Range" (offset 0 the twelve-character Midimap Name, 12 Ch. Program,
+13 Ch. Bank, 14 Ch. Volume, 15 Ch. Pan, 16 Ch. Mix Bus, ...), transcribed
+in `emu/midimap.py` as the 360-row `PARAMS` table: a name block of twelve
+words, sixteen identical twenty-word channel blocks at stride 20, and the
+global/effect tail -- the same shape and labels as the plan's list.
+
+**edisyn corroboration (facts only; Apache-2.0 against our
+GPL-2.0-or-later, §8, nothing copied).** edisyn's `EmuMorpheusMap.java`
+numbers the same parameters with `PARAM_OFFSET = 2048`, and its
+`requestDump` uses command `0x46` with `bank * 16 + number` for the
+RAM/card split. Both agree with the range and the request above, and both
+are checkable without reading edisyn again.
+
+**What is implemented.**
+
+* `emu/midimap.py` -- the 360-row `PARAMS` table, `PARAM_BASE = 2048`,
+  `param_at`/`offset_of`, `parse_dump` and `spell`. Read/display only; it
+  writes nothing.
+* `emu/messages.py` -- `midimap_request` (0x46), `midimap_data` (0x47, the
+  store frame), and the existing `parameter_data` (0x03).
+* `emu/bridge.py` -- `read_midimap` (0x46 -> 0x47, 360 words; a short body
+  refused with the no-card wording), `write_parameter` (range-validated)
+  and `read_parameter`. `read_parameter` re-reads the whole owning map
+  rather than a per-parameter read, because no per-parameter read is
+  documented in what we have: **one 730-byte reply per verification**, the
+  cost stated in its docstring. `send_midimap` is the store.
+* `emorphed/edit.py` -- the pure rules: `EditGate` (locked by default,
+  `toggle`, `describe`, `refuse`), `EditLog`, and `MidimapEditor.allow`
+  (range and enumeration refusal) and `finish`, which logs an edit **only
+  when the read-back agrees**; a value that did not take is reported and
+  not logged.
+* `emorphed/midimapui.py` -- the modal editor: one row per word, a cell
+  cursor, `+`/`-` nudge, digit typing, a picker for enumerations, `r`
+  re-read, `w` gate, `z`/`Z` undo, `s` store, and a status line inside the
+  modal that a refusal lands in.
+* `emorphed/app.py` -- `m` opens the editor (read the current map in a
+  worker, then push the screen); the gate is made once per app and
+  `--allow-write` arms only the **start** state; **backup before the first
+  write** (`emu/backup.py` `save_midimap`, kind/block "midimap"); `z`/`Z`
+  undo through the UndoLog; and the **arm-then-fire store**: ask for a
+  location 0-31, then a `ConfirmScreen` naming what happens ("STORE to
+  location N: erases what is there"), then `send_midimap` plus a re-read.
+  A store is **refused outright** when no backup succeeded this session.
+
+**What is NOT implemented.**
+
+* **No preset writes.** Preset Data sent *to* the unit would replace a
+  preset; nothing in emorphed sends it. Presets are read, selected and
+  backed up only.
+* **No CLI write path and no `restore`.** `morphcli` still only reads.
+* The **store is unverified on hardware**, and the human-attended write
+  bench that would prove the parameter-write path on a unit
+  (`tools/bench_midimap_write.py`) has not been run.
+
+**Scratch versus stored -- the distinction the fence rests on.** A
+parameter write edits the unit's **scratch** midimap: the value it is using
+right now, live, and **not permanent**. Only a **store** makes an edit part
+of a stored location, and a store writes the whole location, **erasing what
+was there**; loading a stored map into the current location reloads the
+scratch map from it. So the editor guards the safe route -- parameter
+writes, one value at a time, each read back -- and keeps the store as a
+separate, destructive action behind a named confirmation and a backup
+taken first.
