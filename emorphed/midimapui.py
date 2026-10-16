@@ -23,6 +23,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Label, Static
 
+from emorphed.text import literal
 from emu import midimap as mm
 from vinsynlib.ui.modals import ChoiceScreen
 from vinsynlib.ui.prompt import PromptScreen
@@ -210,7 +211,7 @@ class MidimapEditScreen(ModalScreen[None]):
 
     def _display_value(self, row: Any) -> str:
         if row == "name":
-            return self._name_text()
+            return literal(self._name_text())
         param = self._param_of(row)
         value = self._raw_value(row)
         try:
@@ -320,7 +321,7 @@ class MidimapEditScreen(ModalScreen[None]):
         label = self._label_of(row)
         value: Any = ""
         if row == "name":
-            value = self._name_text()
+            value = literal(self._name_text())
             rng = "32-127"
         else:
             off = int(row)
@@ -410,7 +411,7 @@ class MidimapEditScreen(ModalScreen[None]):
                         )
                         if row_key == "name":
                             table.update_cell(
-                                "name", "value", self._name_text()
+                                "name", "value", literal(self._name_text())
                             )
                         else:
                             with contextlib.suppress(Exception):

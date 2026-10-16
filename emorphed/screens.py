@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from emorphed.text import escape, literal
 from vinsynlib import keys
 from vinsynlib.keys import wrap_blocks
 from vinsynlib.ui.hints import KeyHints
@@ -32,6 +33,8 @@ __all__ = [
     "KeyHints",
     "PromptScreen",
     "ReportScreen",
+    "escape",
+    "literal",
     "wrap_blocks",
 ]
 

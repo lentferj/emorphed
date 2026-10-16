@@ -65,6 +65,7 @@ from textual.widgets import DataTable, Header, Static
 from emorphed import edit as edmod
 from emorphed.scan import SCAN_OFFER, ScanOfferScreen, ScanScreen
 from emorphed.screens import KEY_HINTS, PromptScreen, ReportScreen
+from emorphed.text import literal
 from emu import backup as bkmod
 from emu import banks
 from emu import catalog as cat
@@ -637,11 +638,12 @@ class EmorphedApp(App[None]):
             params = {off: words[off] for off in range(len(words))}
             with contextlib.suppress(Exception):
                 top.update_params(params)
+        shown_name = literal(new_text)
         if agreed:
-            msg = f"name written: {new_text!r}; read-back agreed (12/12)"
+            msg = f"name written: {shown_name!r}; read-back agreed (12/12)"
         else:
             msg = (
-                f"name written: {new_text!r}; read-back disagreed "
+                f"name written: {shown_name!r}; read-back disagreed "
                 f"({12 - mismatch}/12)"
             )
         if top is not None and hasattr(top, "say"):
@@ -780,7 +782,9 @@ class EmorphedApp(App[None]):
             try:
                 loc = int(text)
             except ValueError:
-                self.notify_status(f"{text!r} is not a number", refused=True)
+                self.notify_status(
+                    f"{literal(text)!r} is not a number", refused=True
+                )
                 return
             if not 0 <= loc <= 31:
                 self.notify_status("a midimap location is 0-31", refused=True)
@@ -1126,7 +1130,9 @@ class EmorphedApp(App[None]):
             try:
                 value = int(text)
             except ValueError:
-                self.notify_status(f"{text!r} is not a number", refused=True)
+                self.notify_status(
+                    f"{literal(text)!r} is not a number", refused=True
+                )
                 return
             if not 0 <= value <= 15:
                 self.notify_status("a device ID is 0-15", refused=True)
@@ -1160,7 +1166,9 @@ class EmorphedApp(App[None]):
             try:
                 value = int(text)
             except ValueError:
-                self.notify_status(f"{text!r} is not a number", refused=True)
+                self.notify_status(
+                    f"{literal(text)!r} is not a number", refused=True
+                )
                 return
             if not 1 <= value <= 16:
                 self.notify_status("MIDI channels are 1-16", refused=True)
@@ -1196,7 +1204,9 @@ class EmorphedApp(App[None]):
         was = self.favorites.get(bank_id, entry.number) is not None
         now = self.favorites.toggle(bank_id, entry.number, name=name)
         self._push_change(FavouriteChange(bank_id, entry.number, was))
-        self.notify_status(f"{'favourited' if now else 'unfavourited'} {name}")
+        self.notify_status(
+            f"{'favourited' if now else 'unfavourited'} {literal(name)}"
+        )
         self._refill_keeping_place()
 
     def _favourite_under_cursor(
@@ -1317,7 +1327,9 @@ class EmorphedApp(App[None]):
         try:
             table.clear()
             for entry in self._current:
-                name = self.catalog.display_name(entry.bank_id, entry.number)
+                name = literal(
+                    self.catalog.display_name(entry.bank_id, entry.number)
+                )
                 if self.catalog.differs(entry.bank_id, entry.number):
                     shown = f"[b]{name}[/b] [dim]*[/dim]"
                 elif self.catalog.is_live(entry.bank_id, entry.number):
@@ -1345,7 +1357,7 @@ class EmorphedApp(App[None]):
             self.query_one("#detail", Static).update("")
             return
         entry = self._current[row]
-        name = self.catalog.display_name(entry.bank_id, entry.number)
+        name = literal(self.catalog.display_name(entry.bank_id, entry.number))
         source = (
             "read from the unit"
             if self.catalog.is_live(entry.bank_id, entry.number)
@@ -1737,16 +1749,17 @@ class EmorphedApp(App[None]):
                 return
             hits = self.catalog.search(text)
             if not hits:
-                self.notify_status(f"nothing matching {text!r}")
+                self.notify_status(f"nothing matching {literal(text)!r}")
                 return
-            lines = [f"{len(hits)} match(es) for {text!r}", ""]
+            lines = [f"{len(hits)} match(es) for {literal(text)!r}", ""]
             for bank_id, number, name, _disagrees in hits[:400]:
                 try:
                     entry = banks.slot(bank_id, number)
                 except LookupError:
                     continue
                 lines.append(
-                    f"{entry.display:<6} {name:<12} PC {entry.number:>3}"
+                    f"{entry.display:<6} {literal(name):<12} "
+                    f"PC {entry.number:>3}"
                 )
             if len(hits) > 400:
                 lines.append(f"... and {len(hits) - 400} more")
@@ -1788,7 +1801,7 @@ class EmorphedApp(App[None]):
         lines = [
             _build_line(),
             "",
-            f"connection      {self.device.description}",
+            f"connection      {literal(self.device.description)}",
             f"device ID       {self.device.device_id}",
             f"MIDI channel    {self.device.channel + 1}",
             "",
