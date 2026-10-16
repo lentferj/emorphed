@@ -82,6 +82,7 @@ class DemoDevice:
         self.recv_port: str | None = None
         self.selected: banks.Slot | None = None
         self.selected_log: list[tuple[banks.Slot, int]] = []
+        self.selected_midimaps: list[int] = []
         self._closed = False
 
     def close(self) -> None:
@@ -146,3 +147,14 @@ class DemoDevice:
         banks.select_messages(target, self.channel)  # same refusals
         self.selected = target
         self.selected_log.append((target, self.channel))
+
+    # --- selecting a midimap over SysEx ------------------------------
+
+    def select_midimap(self, number: int) -> None:
+        """Make a midimap current. **This changes what plays.**"""
+        self._tick()
+        if not 0 <= number <= 31:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"midimap {number} is outside 0-31 (16 RAM + 16 card)"
+            )
+        self.selected_midimaps.append(number)

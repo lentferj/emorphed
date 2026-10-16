@@ -55,9 +55,12 @@ from collections.abc import Iterable, Sequence
 
 __all__ = [
     "BANK_REQUEST_BASE",
+    "CURRENT_MIDIMAP",
     "EMU_ID",
     "HYPERPRESET_DATA_BYTES",
     "MIDIMAP_DATA_BYTES",
+    "MIDI_MODE",
+    "MIDI_MODE_MULTI",
     "MORPHEUS_ID",
     "NAME_CHARS",
     "PRESET_DATA_BYTES",
@@ -78,11 +81,13 @@ __all__ = [
     "master_data_request",
     "midimap_list_request",
     "midimap_request",
+    "parameter_data",
     "parse",
     "parse_name_list",
     "preset_bank_request",
     "preset_list_request",
     "preset_request",
+    "select_midimap_frames",
     "signed",
     "to_words",
     "version_request",
@@ -116,6 +121,21 @@ BANK_REQUEST_BASE = 0x0400
 PRESET_DATA_BYTES = 566
 HYPERPRESET_DATA_BYTES = 484
 MIDIMAP_DATA_BYTES = 730
+
+
+#: Master-parameter numbers, from the Operation Manual's parameter table
+#: (page 249): ``264 Midi Mode`` and ``320 Current Midimap``. These are
+#: global, not preset/midimap-offset, parameters -- see the midimap
+#: selection page (159), which is the only place that says so. The manual
+#: calls the three Midi Modes Omni, Poly, Multi and Mono; "Multi" is the
+#: one a remote midimap selection needs, value 2.
+#:
+#: Page 159 of the Operation Manual: "The ONLY way to select a Midimap
+#: remotely is to use a SysEx message." The two frames it gives are built
+#: by :func:`select_midimap_frames`.
+MIDI_MODE = 264
+CURRENT_MIDIMAP = 320
+MIDI_MODE_MULTI = 2
 
 
 class ProtocolError(ValueError):
@@ -492,3 +512,51 @@ def configuration_request(*, device: int = 0) -> bytes:
 
 def master_data_request(*, device: int = 0) -> bytes:
     return frame(Command.MASTER_DATA_REQUEST, device=device)
+
+
+def parameter_data(param: int, value: int, *, device: int = 0) -> bytes:
+    """One ``Parameter Data`` frame, ``F0 18 0C dd 03 pl pm vl vm F7``.
+
+    Master (global) parameters such as :data:`MIDI_MODE` and
+    :data:`CURRENT_MIDIMAP` travel this way -- ten bytes, no checksum,
+    because Parameter Data is not one of the numbered data messages and
+    the manual's frames (page 234, page 159) carry none. Both numbers are
+    fourteen-bit, least significant seven bits first.
+    """
+    if not -0x2000 <= param <= 0x3FFF:
+        raise ProtocolError(
+            f"{param} does not fit in a fourteen-bit parameter number"
+        )
+    if not -0x2000 <= value <= 0x3FFF:
+        raise ProtocolError(
+            f"{value} does not fit in a fourteen-bit parameter value"
+        )
+    param_word = param & 0x3FFF
+    value_word = value & 0x3FFF
+    body = [
+        param_word & 0x7F,
+        (param_word >> 7) & 0x7F,
+        value_word & 0x7F,
+        (value_word >> 7) & 0x7F,
+    ]
+    return frame(Command.PARAMETER_DATA, body, device=device)
+
+
+def select_midimap_frames(number: int, *, device: int = 0) -> list[bytes]:
+    """The two frames page 159 says turn Multi mode on and make a
+    midimap current, in order: Midi Mode = Multi, then Current Midimap
+    = ``number``.
+
+    Returning them as a list (rather than sending them here) keeps the
+    sequence testable without a bridge. ``number`` is the midimap's own
+    number, 0-31 (16 RAM + 16 card) -- the thing the manual's chart on
+    page 159 maps to a hex byte.
+    """
+    if not 0 <= number <= 31:
+        raise ProtocolError(
+            f"midimap {number} is outside 0-31 (16 RAM + 16 card)"
+        )
+    return [
+        parameter_data(MIDI_MODE, MIDI_MODE_MULTI, device=device),
+        parameter_data(CURRENT_MIDIMAP, number, device=device),
+    ]

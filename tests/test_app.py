@@ -36,6 +36,7 @@ from emorphed.screens import ReportScreen
 from emu import banks
 from emu import catalog as cat
 from emu import favorites as fav
+from vinsynlib.ui.confirm import ConfirmScreen
 from vinsynlib.ui.modals import RatingFilter
 
 
@@ -91,6 +92,14 @@ class InterleaveDemo(DemoDevice):
         finally:
             self._exit()
 
+    def select_midimap(self, number: int) -> None:
+        self._enter()
+        try:
+            time.sleep(self.delay)
+            super().select_midimap(number)
+        finally:
+            self._exit()
+
 
 class Boom(Exception):
     """Not in ``_BRIDGE_ERRORS``, so the worker's ``finally`` is the guard."""
@@ -100,6 +109,13 @@ class ExplodingDemo(InterleaveDemo):
     """A device whose ``select`` raises past the worker's error handling."""
 
     def select(self, target: banks.Slot) -> None:
+        self._enter()
+        try:
+            raise Boom("synthetic select failure")
+        finally:
+            self._exit()
+
+    def select_midimap(self, number: int) -> None:
         self._enter()
         try:
             raise Boom("synthetic select failure")
@@ -242,7 +258,64 @@ class TestOnlyPresetsAreSelected:
             assert len(device.selected_log) == 1
             assert device.selected_log[0][0].kind == banks.Kind.PRESET
 
-    async def test_enter_on_a_midimap_sends_nothing(
+    async def test_enter_on_a_midimap_opens_a_confirmation(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._fill("M-RAM")
+            await pilot.pause()
+            app.query_one("#slot-table").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            for _ in range(8):
+                await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            assert device.selected_log == []
+            assert device.selected_midimaps == []
+
+    async def test_confirming_makes_the_midimap_current(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._fill("M-RAM")
+            await pilot.pause()
+            table = app.query_one("#slot-table", DataTable)
+            table.move_cursor(row=3)
+            await pilot.pause()
+            app.query_one("#slot-table").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            for _ in range(8):
+                await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            await pilot.press("y")
+            for _ in range(20):
+                await pilot.pause()
+            assert device.selected_midimaps == [3]
+            assert device.selected_log == []
+
+    async def test_cancelling_sends_nothing(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._fill("M-RAM")
+            await pilot.pause()
+            app.query_one("#slot-table").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            for _ in range(8):
+                await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            await pilot.press("n")
+            for _ in range(8):
+                await pilot.pause()
+            assert device.selected_midimaps == []
+            assert device.selected_log == []
+
+    async def test_enter_on_a_midimap_sends_nothing_before_confirming(
         self, app: EmorphedApp, device: DemoDevice
     ) -> None:
         async with app.run_test() as pilot:
@@ -253,6 +326,7 @@ class TestOnlyPresetsAreSelected:
             await pilot.press("enter")
             for _ in range(8):
                 await pilot.pause()
+            assert device.selected_midimaps == []
             assert device.selected_log == []
 
     async def test_two_selections_in_a_row_send_one(self) -> None:
@@ -268,6 +342,30 @@ class TestOnlyPresetsAreSelected:
             for _ in range(60):
                 await pilot.pause()
             assert len(demo.selected_log) == 1
+
+
+class TestHyperpresetStillRefused:
+    async def test_enter_on_a_hyperpreset_refuses(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._fill("H-RAM")
+            await pilot.pause()
+            app.query_one("#slot-table").focus()
+            await pilot.pause()
+            said = _capture(app)
+            await pilot.press("enter")
+            for _ in range(8):
+                await pilot.pause()
+            refusal = (
+                "a hyperpreset is not selected with a program change; "
+                "only presets are",
+                True,
+            )
+            assert refusal in said
+            assert device.selected_midimaps == []
+            assert device.selected_log == []
 
 
 class TestReadingNames:

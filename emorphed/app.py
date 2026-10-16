@@ -72,6 +72,7 @@ from emu.favorites import Favorite, Favorites
 from vinsynlib.build import build_of
 from vinsynlib.cli import add_common_arguments, make_parser, validate_common
 from vinsynlib.keys import wrap_blocks as _wrap_blocks
+from vinsynlib.ui.confirm import ConfirmScreen
 from vinsynlib.ui.hints import KeyHints
 from vinsynlib.ui.modals import RatingFilter, RatingFilterScreen
 from vinsynlib.ui.work import QUIET_BRIDGE_ERRORS, BusyGate, close_when_idle
@@ -898,10 +899,24 @@ class EmorphedApp(App[None]):
             self.notify_status("busy", refused=True)
             return
         entry = self._current[row]
-        if entry.kind != banks.Kind.PRESET:
+        if entry.kind == banks.Kind.HYPERPRESET:
             # Refused here rather than in the worker, so that nothing is
-            # sent at all. A midimap has no program change; a program
-            # change aimed at one would land on a preset instead.
+            # sent at all. A hyperpreset is selected as a preset in the
+            # hyperpreset range, not over this exchange.
+            self.notify_status(
+                f"a {entry.kind} is not selected with a program change; "
+                f"only presets are",
+                refused=True,
+            )
+            return
+        if entry.kind == banks.Kind.MIDIMAP:
+            # A midimap has no program change, but it can be made current
+            # over System Exclusive -- two frames, per the manual's
+            # page 159. That changes what plays, so it gets its own
+            # confirmation before anything is sent.
+            self._confirm_midimap(entry)
+            return
+        if entry.kind != banks.Kind.PRESET:
             self.notify_status(
                 f"a {entry.kind} is not selected with a program change; "
                 f"only presets are",
@@ -915,6 +930,30 @@ class EmorphedApp(App[None]):
             self.notify_status("busy", refused=True)
             return
         self._select_worker(entry)
+
+    def _confirm_midimap(self, entry: banks.Slot) -> None:
+        midimap_name = f"M{entry.index:02d}"
+        prompt = (
+            f"make Midimap {midimap_name} current on the unit; "
+            f"this switches it to Multi mode and changes what plays"
+        )
+        self.push_screen(
+            ConfirmScreen(prompt),
+            lambda confirmed: self._midimap_answered(entry, confirmed),
+        )
+
+    def _midimap_answered(
+        self, entry: banks.Slot, confirmed: bool | None
+    ) -> None:
+        if not confirmed:
+            return
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            return
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            return
+        self._select_midimap_worker(entry)
 
     @work(thread=True)
     def _select_worker(self, entry: banks.Slot) -> None:
@@ -935,6 +974,25 @@ class EmorphedApp(App[None]):
             f"{banks.bank_of(entry.kind, entry.index)} then Program Change "
             f"{entry.number} on channel {self.device.channel + 1}; "
             f"that number reaches it under the default Program Map",
+        )
+
+    @work(thread=True)
+    def _select_midimap_worker(self, entry: banks.Slot) -> None:
+        """**MIDI only.** Makes a midimap current. The gate tracks
+        the exchange in progress."""
+        try:
+            with self._busy_gate:
+                self.device.select_midimap(entry.index)
+        except _BRIDGE_ERRORS as exc:
+            self.call_from_thread(
+                self.notify_status, f"select midimap: {exc}", refused=True
+            )
+            return
+        finally:
+            self._exchange.release()
+        self.call_from_thread(
+            self.notify_status,
+            f"made Midimap M{entry.index:02d} current on the unit",
         )
 
     def action_read_names(self) -> None:
@@ -1268,7 +1326,7 @@ Keys
 
   ↑↓        move; this never sends anything
   tab       switch pane
-  ⏎         select on the unit -- presets only
+  ⏎         select on the unit -- presets, or a midimap (confirms)
   r         read every name of this kind (silent, one message)
   /         search the names
   [ ]       previous / next MIDI channel

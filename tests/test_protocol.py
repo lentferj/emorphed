@@ -226,3 +226,32 @@ class TestNameLists:
             0, m.Command.PRESET_LIST_DATA, None, None, bytes(body)
         )
         assert m.parse_name_list(packet) == ["Invented One"]
+
+
+class TestParameterData:
+    def test_midi_mode_multi_frame(self) -> None:
+        assert m.parameter_data(264, 2) == bytes.fromhex(
+            "f0180c000308020200f7"
+        )
+
+    def test_current_midimap_ten(self) -> None:
+        assert m.parameter_data(320, 10) == bytes.fromhex(
+            "f0180c000340020a00f7"
+        )
+
+    def test_a_nonzero_device_id_lands_in_the_header(self) -> None:
+        assert m.parameter_data(264, 2, device=5) == bytes.fromhex(
+            "f0180c050308020200f7"
+        )
+
+    def test_master_parameter_constants(self) -> None:
+        assert m.MIDI_MODE == 264
+        assert m.CURRENT_MIDIMAP == 320
+        assert m.MIDI_MODE_MULTI == 2
+
+    def test_select_midimap_frames_are_in_order(self) -> None:
+        frames = m.select_midimap_frames(3)
+        assert [bytes(x) for x in frames] == [
+            bytes.fromhex("f0180c000308020200f7"),
+            bytes.fromhex("f0180c000340020300f7"),
+        ]

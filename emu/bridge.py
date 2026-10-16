@@ -315,6 +315,28 @@ class MorpheusBridge:
         for message in banks.select_messages(target, self.channel):
             self._out.send_message(list(message))
 
+    def select_midimap(self, number: int) -> None:
+        """Make a midimap the current one. **This changes what plays.**
+
+        A midimap has no program change; page 159 of the manual says the
+        ONLY way to select one remotely is two System Exclusive frames:
+        Midi Mode set to Multi, then Current Midimap set to ``number``.
+        This is a *selection*, not a data write -- like ``select``, it
+        is fire-and-forget (Bank Select + Program Change is equally
+        fire-and-forget), so there is no read-back after it and no reply
+        to wait for.
+
+        ``number`` is the midimap's own number, 0-31 (16 RAM + 16 card).
+        """
+        if not 0 <= number <= 31:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"midimap {number} is outside 0-31 (16 RAM + 16 card)"
+            )
+        frames = m.select_midimap_frames(number, device=self.device_id)
+        self._out.send_message(list(frames[0]))
+        time.sleep(PRESET_GAP)
+        self._out.send_message(list(frames[1]))
+
     # --- discovery ----------------------------------------------------------
 
     @classmethod
