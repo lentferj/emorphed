@@ -421,3 +421,20 @@ class TestDemoMidimapRoundTrip:
             dev.write_parameter(2408, 1)
         with pytest.raises(Exception, match=r"0x3FFF|16383"):
             dev.write_parameter(2048, 0x4000)
+
+
+class TestBridgeSendMidimap:
+    def test_sends_exact_frame(self) -> None:
+        words = [i % 1000 for i in range(360)]
+        fake_in = _FakeIn([])
+        fake_out = _FakeOut()
+        bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
+        bridge.send_midimap(3, words)
+        assert fake_out.sent == [list(m.midimap_data(words, number=3))]
+
+    def test_device_stores_and_read_sees_it(self) -> None:
+        words = [7] * 360
+        dev = DemoDevice()
+        dev.send_midimap(3, words)
+        assert dev.midimap_stores == [(3, words)]
+        assert dev.read_midimap(3) == words

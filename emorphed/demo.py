@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
+from typing import Any
 
 from emu import banks
 from emu import messages as m
@@ -85,6 +86,8 @@ class DemoDevice:
         self.selected_midimaps: list[int] = []
         #: Midimap parameter writes observed, in order: (param, value).
         self.parameter_writes: list[tuple[int, int]] = []
+        #: Midimap stores observed, in order: (index, words).
+        self.midimap_stores: list[tuple[int, list[int]]] = []
         #: The one mutable midimap this demo stands in for (360 words,
         #: one per midimap parameter index 0-359). A write lands here so
         #: the next read-back sees it.
@@ -206,3 +209,15 @@ class DemoDevice:
         if not 0 <= offset < len(self._midimap):
             return None
         return self._midimap[offset]
+
+    def send_midimap(
+        self, index: int, words: Any, *, timeout: float | None = None
+    ) -> None:
+        self._tick()
+        if not 0 <= index <= 31:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"midimap {index} is outside 0-31 (16 RAM + 16 card)"
+            )
+        stored = list(words)
+        self.midimap_stores.append((index, stored))
+        self._midimap = stored

@@ -79,6 +79,7 @@ __all__ = [
     "hyperpreset_list_request",
     "hyperpreset_request",
     "master_data_request",
+    "midimap_data",
     "midimap_list_request",
     "midimap_request",
     "parameter_data",
@@ -577,3 +578,40 @@ def select_midimap_frames(number: int, *, device: int = 0) -> list[bytes]:
         parameter_data(MIDI_MODE, MIDI_MODE_MULTI, device=device),
         parameter_data(CURRENT_MIDIMAP, number, device=device),
     ]
+
+
+def midimap_data(
+    words: Sequence[int],
+    *,
+    number: int,
+    device: int = 0,
+    product: int = MORPHEUS_ID,
+) -> bytes:
+    """One ``Midimap Data`` frame, ``F0 18 0C dd 47 01 nn 0n ... cs F7``.
+
+    ``words`` is the 360-word body. This is the STORE: sending it writes
+    the midimap at ``number`` (erasing what was there), and if that
+    location is the currently selected one the scratch map is reloaded
+    from it. The caller must have taken a backup first.
+    """
+    if len(words) != 360:
+        raise ProtocolError(f"a midimap body is 360 words; got {len(words)}")
+    if not 0 <= number <= 0x3FFF:
+        raise ProtocolError(f"{number} does not fit in fourteen bits")
+    if not 0 <= device <= 15:
+        raise ProtocolError(f"device ID {device} is outside 0-15")
+    body = to_words(words)
+    head = [0x01, number & 0x7F, (number >> 7) & 0x7F]
+    return bytes(
+        [
+            SYSEX_START,
+            EMU_ID,
+            product,
+            device,
+            Command.MIDIMAP_DATA,
+            *head,
+            *body,
+            checksum(body),
+            SYSEX_END,
+        ]
+    )

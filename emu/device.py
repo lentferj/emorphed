@@ -27,7 +27,7 @@ are passed ``None`` and never touch it.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from emu import banks
 
@@ -61,6 +61,10 @@ class Device(Protocol):
 
     def write_parameter(
         self, param: int, value: int, *, timeout: float | None = None
+    ) -> None: ...
+
+    def send_midimap(
+        self, index: int, words: Any, *, timeout: float | None = None
     ) -> None: ...
 
     def read_parameter(self, param: int) -> int | None: ...

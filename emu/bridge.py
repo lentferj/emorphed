@@ -376,6 +376,22 @@ class MorpheusBridge:
             list(m.parameter_data(param, value, device=self.device_id))
         )
 
+    def send_midimap(
+        self, index: int, words: Any, *, timeout: float | None = None
+    ) -> None:
+        """Send one Midimap Data frame. **This is the STORE.**
+
+        Sending a midimap writes the midimap at ``index`` (erasing what
+        was there -- manual p.36), and when that location is the
+        currently selected one the unit reloads its scratch midimap from
+        the newly stored map (manual p.237). A backup must have been taken
+        first; that is the caller's job, and nothing here does it. There is
+        no reply to wait for, so ``timeout`` is accepted for symmetry with
+        the other methods and is unused.
+        """
+        frame = m.midimap_data(words, number=index, device=self.device_id)
+        self._out.send_message(list(frame))
+
     def read_parameter(self, param: int) -> int | None:
         """Read one midimap parameter back, by re-reading a whole map.
 
