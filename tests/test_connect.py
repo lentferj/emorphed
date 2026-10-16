@@ -89,6 +89,7 @@ class _Rig:
         self.tried: list[str] = []
         self.swept = 0
         self.made: list[_FakeBridge] = []
+        self.probes: list[tuple[str, int]] = []
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> _Rig:
         rig = self
@@ -113,6 +114,7 @@ class _Rig:
             bridge.device_id = device_id
             bridge.channel = channel
             rig.made.append(bridge)
+            rig.probes.append((port, device_id))
             return bridge
 
         def fake_autodetect(
@@ -365,3 +367,64 @@ class TestTheSweep:
 
         with pytest.raises(b.DeviceError, match="nothing answered"):
             b.MorpheusBridge.connect(config_path=path)
+
+
+# --- remembered device id ----------------------------------------------------
+
+
+class TestRememberedDeviceId:
+    def test_remembered_port_is_probed_with_remembered_device_id(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        path = _remembered(tmp_path)
+        cfg.save_device_id(7, path)
+        rig = _Rig({MORPHEUS_PORT: True}).install(monkeypatch)
+
+        b.MorpheusBridge.connect(config_path=path)
+
+        assert rig.probes, "the remembered port was not probed"
+        assert rig.probes[0] == (MORPHEUS_PORT, 7)
+
+    def test_no_remembered_device_id_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        path = _remembered(tmp_path)
+        rig = _Rig({MORPHEUS_PORT: True}).install(monkeypatch)
+
+        b.MorpheusBridge.connect(config_path=path)
+
+        assert rig.probes, "the remembered port was not probed"
+        assert rig.probes[0] == (MORPHEUS_PORT, 0)
+
+    def test_a_dead_remembered_probe_falls_back_and_announces(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        path = _remembered(tmp_path)
+        cfg.save_device_id(7, path)
+        rig = _Rig({MORPHEUS_PORT: False, OTHER_PORT: True}).install(
+            monkeypatch
+        )
+        said: list[str] = []
+
+        bridge = b.MorpheusBridge.connect(config_path=path, on_try=said.append)
+
+        assert rig.swept == 1
+        assert bridge.port == OTHER_PORT
+        assert rig.probes[0] == (MORPHEUS_PORT, 7)
+        assert said[0] == f"{MORPHEUS_PORT} (remembered, did not answer)"
+
+    def test_scan_skips_the_remembered_probe(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        path = _remembered(tmp_path)
+        cfg.save_device_id(7, path)
+        rig = _Rig(
+            {OTHER_PORT: True}, ports=[MORPHEUS_PORT, OTHER_PORT]
+        ).install(monkeypatch)
+
+        b.MorpheusBridge.connect(config_path=path, scan=True)
+
+        assert all(p[0] != MORPHEUS_PORT for p in rig.probes), (
+            "the remembered port was probed under --scan"
+        )
+        assert rig.opened == [OTHER_PORT]

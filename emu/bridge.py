@@ -361,13 +361,25 @@ class MorpheusBridge:
             else cfg.load_port_pair(config_path)
         )
 
+        # The remembered port belongs to whatever unit answered there last
+        # time, and that unit is identified by its SysEx device ID. Probing
+        # it with a different (usually the default, 0) ID silences the one
+        # unit that is actually there, so use the ID remembered alongside it.
+        # Only when nothing has been remembered yet does the probe fall back
+        # to the caller's/default ID, exactly as before.
+        remembered_device_id = device_id
+        if remembered is not None:
+            loaded = cfg.load_device_id(config_path)
+            if loaded is not None:
+                remembered_device_id = loaded
+
         def probe(send: str, recv: str) -> MorpheusBridge:
             """One round trip to the named port. Raises if nothing answers."""
             try:
                 bridge = cls.open(
                     send,
                     recv_port=recv,
-                    device_id=device_id,
+                    device_id=remembered_device_id,
                     channel=channel,
                     timeout=PROBE_TIMEOUT,
                 )
