@@ -83,6 +83,12 @@ class DemoDevice:
         self.selected: banks.Slot | None = None
         self.selected_log: list[tuple[banks.Slot, int]] = []
         self.selected_midimaps: list[int] = []
+        #: Midimap parameter writes observed, in order: (param, value).
+        self.parameter_writes: list[tuple[int, int]] = []
+        #: The one mutable midimap this demo stands in for (360 words,
+        #: one per midimap parameter index 0-359). A write lands here so
+        #: the next read-back sees it.
+        self._midimap: list[int] = [0] * 360
         self._closed = False
 
     def close(self) -> None:
@@ -158,3 +164,45 @@ class DemoDevice:
                 f"midimap {number} is outside 0-31 (16 RAM + 16 card)"
             )
         self.selected_midimaps.append(number)
+
+    # --- midimap reading and parameter writes -------------------------
+
+    def read_midimap(
+        self, index: int, *, timeout: float | None = None
+    ) -> list[int]:
+        self._tick()
+        if not 0 <= index <= 31:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"midimap {index} is outside 0-31 (16 RAM + 16 card)"
+            )
+        if index >= 16 and not self.card:  # noqa: PLR2004
+            raise TimeoutError(
+                f"midimap {index}: no card fitted, so the request is "
+                f"ignored outright"
+            )
+        return list(self._midimap)
+
+    def write_parameter(
+        self, param: int, value: int, *, timeout: float | None = None
+    ) -> None:
+        self._tick()
+        if not 2048 <= param <= 2407:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"param {param} is outside the midimap parameter range "
+                f"2048-2407 (manual p.264)"
+            )
+        if not 0 <= value <= 0x3FFF:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"value {value} is outside the fourteen-bit range 0-0x3FFF "
+                f"(16383)"
+            )
+        offset = param - 2048
+        self._midimap[offset] = value
+        self.parameter_writes.append((param, value))
+
+    def read_parameter(self, param: int) -> int | None:
+        self._tick()
+        offset = param - 2048
+        if not 0 <= offset < len(self._midimap):
+            return None
+        return self._midimap[offset]

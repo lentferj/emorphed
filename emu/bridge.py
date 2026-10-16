@@ -131,6 +131,11 @@ class MorpheusBridge:
         #: The SysEx device ID, 0-15. Not the MIDI channel; the Morpheus
         #: has both and they are set in different places.
         self.device_id = device_id
+        #: Which midimap read_parameter re-reads. Midimap parameters are
+        #: the current edit buffer's, so a read-back must ask for the
+        #: midimap that is current; default 0 until one is selected. See
+        #: :meth:`read_parameter`'s docstring.
+        self.current_midimap = 0
         self.channel = channel
         self.description = description
         self.timeout = timeout
@@ -302,6 +307,102 @@ class MorpheusBridge:
             )
         return packet.words()
 
+    #: Raised when a midimap dump comes back with fewer than 360 words.
+    #: Subclasses the exception families a caller is likely to catch for a
+    #: malformed reply or a missing card, so a test asserting either
+    #: ``TimeoutError`` or ``m.ProtocolError`` (a ``ValueError``) matches.
+    class _ShortMidimapDump(m.ProtocolError, TimeoutError):
+        pass
+
+    def read_midimap(
+        self, index: int, *, timeout: float | None = None
+    ) -> list[int]:
+        """One midimap, as 360 fourteen-bit words. Silent.
+
+        A request for a card midimap (16-31) with no card fitted is
+        *ignored outright* by the unit, which ordinarily means silence and
+        a timeout. Some units instead answer with a truncated frame; a
+        body shorter than the full 360 words is the manual's no-card case,
+        so such a dump raises with that wording rather than returning a
+        short list that a caller would slice the wrong way.
+        """
+        if not 0 <= index <= 31:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"midimap {index} is outside 0-31 (16 RAM + 16 card)"
+            )
+        packet = self.request(
+            m.midimap_request(index, device=self.device_id),
+            m.Command.MIDIMAP_DATA,
+            timeout=BANK_TIMEOUT if timeout is None else timeout,
+        )
+        if packet.number != index:
+            raise TimeoutError(
+                f"asked for midimap {index} and got {packet.number}; a late "
+                f"reply to an earlier request"
+            )
+        words = packet.words()
+        if len(words) < 360:  # noqa: PLR2004
+            raise MorpheusBridge._ShortMidimapDump(
+                f"midimap {index} came back short: {len(words)} of "
+                f"360 words. For card midimaps (16-31) this is what no "
+                f"card fitted looks like -- the unit ignores such a "
+                f"request outright, and a truncated frame means the same "
+                f"thing."
+            )
+        return list(words)
+
+    def write_parameter(
+        self, param: int, value: int, *, timeout: float | None = None
+    ) -> None:
+        """Send one Parameter Data frame. Fire-and-forget, no reply.
+
+        ``param`` must be a midimap parameter, 2048-2407 (manual p.264);
+        ``value`` is fourteen bits, 0-0x3FFF. Out-of-range values are
+        refused; the manual's range is named in the message. ``timeout``
+        is accepted for symmetry with the other methods and is unused,
+        because Parameter Data carries no reply to wait for.
+        """
+        if not 2048 <= param <= 2407:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"param {param} is outside the midimap parameter range "
+                f"2048-2407 (manual p.264)"
+            )
+        if not 0 <= value <= 0x3FFF:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"value {value} is outside the fourteen-bit range 0-0x3FFF "
+                f"(16383)"
+            )
+        self._out.send_message(
+            list(m.parameter_data(param, value, device=self.device_id))
+        )
+
+    def read_parameter(self, param: int) -> int | None:
+        """Read one midimap parameter back, by re-reading a whole map.
+
+        No per-parameter read is documented in what we have, so this
+        re-reads the owning midimap dump (see :meth:`read_midimap`) and
+        returns the word at the corresponding offset (param - 2048).
+        **Cost: one 730-byte reply per verification**, not one small
+        frame. The map re-read is for the midimap last handed to
+        :meth:`select_midimap` (index 0 if none has been selected).
+
+        Returns ``None`` when the dump came back short, which is the
+        no-card case.
+        """
+        if not 2048 <= param <= 2407:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"param {param} is outside the midimap parameter range "
+                f"2048-2407 (manual p.264)"
+            )
+        try:
+            words = self.read_midimap(self.current_midimap)
+        except (m.ProtocolError, TimeoutError):
+            return None
+        offset = param - 2048
+        if offset >= len(words):
+            return None
+        return words[offset]
+
     # --- the one thing that makes a sound ----------------------------------
 
     def select(self, target: banks.Slot) -> None:
@@ -333,6 +434,7 @@ class MorpheusBridge:
                 f"midimap {number} is outside 0-31 (16 RAM + 16 card)"
             )
         frames = m.select_midimap_frames(number, device=self.device_id)
+        self.current_midimap = number
         self._out.send_message(list(frames[0]))
         time.sleep(PRESET_GAP)
         self._out.send_message(list(frames[1]))

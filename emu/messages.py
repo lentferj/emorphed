@@ -483,8 +483,20 @@ def hyperpreset_request(number: int, *, device: int = 0) -> bytes:
     return _numbered_request(Command.HYPERPRESET_REQUEST, number, device)
 
 
-def midimap_request(number: int, *, device: int = 0) -> bytes:
-    return _numbered_request(Command.MIDIMAP_REQUEST, number, device)
+def midimap_request(index: int, *, device: int = 0) -> bytes:
+    """Ask for one midimap, by its own index (0-31).
+
+    Command ``0x46``, the number is the index itself as one fourteen-bit
+    value, least significant seven bits first -- ``F0 18 0C dd 46 nn 0n F7``.
+    Indices 0-15 are RAM midimaps and 16-31 are card midimaps; a request
+    for a card midimap when no card is fitted is ignored outright by the
+    unit. See E-mu's own ``requestDump`` in the sibling edisyn
+    (``EmuMorpheusMap.java``, lines 871-882) for the same framing, where
+    the number is written bank*16 + number with the same least-
+    significant-first encoding; emorphed addresses a midimap by its
+    single index instead.
+    """
+    return _numbered_request(Command.MIDIMAP_REQUEST, index, device)
 
 
 def preset_list_request(*, device: int = 0) -> bytes:

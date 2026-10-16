@@ -17,7 +17,9 @@
 
 import pytest
 
+from emorphed.demo import DemoDevice
 from emu import banks, dumps
+from emu import bridge as b
 from emu import messages as m
 
 
@@ -309,3 +311,113 @@ class TestParameterData:
             bytes.fromhex("f0180c000308020200f7"),
             bytes.fromhex("f0180c000340020300f7"),
         ]
+
+
+class TestMidimapRequestBytes:
+    def test_zero(self) -> None:
+        assert m.midimap_request(0) == bytes.fromhex("f0180c00460000f7")
+
+    def test_sixteen(self) -> None:
+        assert m.midimap_request(16) == bytes.fromhex("f0180c00461000f7")
+
+
+def _midimap_dump(index: int, words: list[int], device: int = 0) -> bytes:
+    body = m.to_words(words)
+    head = [1, index & 0x7F, (index >> 7) & 0x7F]
+    return bytes(
+        [
+            0xF0,
+            m.EMU_ID,
+            m.MORPHEUS_ID,
+            device,
+            m.Command.MIDIMAP_DATA,
+            *head,
+            *list(body),
+            m.checksum(body),
+            0xF7,
+        ]
+    )
+
+
+class _FakeIn:
+    def __init__(self, messages: list[bytes]) -> None:
+        self._messages = list(messages)
+        #: The first call happens during ``_drain``, before anything was
+        #: sent, and must yield nothing.
+        self._drained = False
+
+    def ignore_types(self, **_kwargs: object) -> None:
+        return None
+
+    def get_message(self) -> tuple[bytes] | None:
+        if not self._drained:
+            self._drained = True
+            return None
+        if not self._messages:
+            return None
+        return (self._messages.pop(0),)
+
+
+class _FakeOut:
+    def __init__(self) -> None:
+        self.sent: list[list[int]] = []
+
+    def send_message(self, message: list[int]) -> None:
+        self.sent.append(list(message))
+
+
+class TestBridgeReadMidimap:
+    def test_parses_360_words(self) -> None:
+        words = [i % 1000 for i in range(360)]
+        dump = _midimap_dump(0, words)
+        fake_in = _FakeIn([dump])
+        fake_out = _FakeOut()
+        bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
+        got = bridge.read_midimap(0)
+        assert got == words
+        assert len(got) == 360
+
+    def test_short_dump_raises_card_wording(self) -> None:
+        dump = _midimap_dump(16, [1, 2, 3])
+        fake_in = _FakeIn([dump])
+        fake_out = _FakeOut()
+        bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
+        with pytest.raises(Exception, match="card"):
+            bridge.read_midimap(16)
+
+    def test_write_parameter_sends_exact_frame(self) -> None:
+        fake_in = _FakeIn([])
+        fake_out = _FakeOut()
+        bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
+        bridge.write_parameter(2048, 5)
+        assert fake_out.sent == [
+            [0xF0, 0x18, 0x0C, 0, 0x03, 0x00, 0x10, 0x05, 0x00, 0xF7]
+        ]
+
+    def test_write_parameter_refuses_out_of_range(self) -> None:
+        fake_in = _FakeIn([])
+        fake_out = _FakeOut()
+        bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
+        with pytest.raises(Exception, match="2048"):
+            bridge.write_parameter(2047, 1)
+        with pytest.raises(Exception, match="2048"):
+            bridge.write_parameter(2408, 1)
+        with pytest.raises(Exception, match=r"0x3FFF|16383"):
+            bridge.write_parameter(2048, 0x4000)
+
+
+class TestDemoMidimapRoundTrip:
+    def test_write_then_read_sees_value(self) -> None:
+        dev = DemoDevice()
+        dev.write_parameter(2048, 7)
+        assert dev.read_parameter(2048) == 7
+        assert dev.parameter_writes == [(2048, 7)]
+
+    def test_refusals(self) -> None:
+        dev = DemoDevice()
+        with pytest.raises(Exception, match="2048"):
+            dev.write_parameter(2047, 1)
+        with pytest.raises(Exception, match="2048"):
+            dev.write_parameter(2408, 1)
+        with pytest.raises(Exception, match=r"0x3FFF|16383"):
+            dev.write_parameter(2048, 0x4000)
