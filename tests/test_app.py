@@ -885,12 +885,14 @@ class TestMidimapCurrentIndexAndScratch:
             screen = cast(Any, app.screen)
             before_reads = len(device.parameter_reads)
             before_stores = len(device.midimap_stores)
+            before_midimap_reads = len(device.midimap_reads)
             screen.action_re_read()
             await _settle(app, pilot)
             await pilot.pause()
             assert len(device.parameter_reads) - before_reads == 360
             # Not a 0x46 stored dump: no new midimap read/store happened.
             assert len(device.midimap_stores) == before_stores
+            assert len(device.midimap_reads) == before_midimap_reads
             assert getattr(screen, "_values", {}).get(0) == 7
             assert getattr(screen, "_values", {}).get(1) == 42
             said_status = None
@@ -908,7 +910,7 @@ class TestMidimapCurrentIndexAndScratch:
 
 
 class TestMidimapNameWrite:
-    async def test_name_write_twelve_frames_readback_agreement_and_undo(
+    async def test_name_write_locked_gate_zero_writes(
         self, app: EmorphedApp, device: DemoDevice
     ) -> None:
         async with app.run_test() as pilot:
@@ -916,26 +918,90 @@ class TestMidimapNameWrite:
             app.action_midimap_edit()
             await _settle(app, pilot)
             await pilot.pause()
+            writes_before = len(device.parameter_writes)
+            said = _capture(app)
+            app._apply_midimap_name("Hi there")
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) - writes_before == 0
+            assert any("write gate is locked" in m for m, _ in said)
+
+    async def test_name_write_armed_gate_twelve_writes_agreement(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
             screen = cast(Any, app.screen)
-            # capture baseline
             writes_before = len(device.parameter_writes)
             reads_before = len(device.parameter_reads)
             said = _capture(app)
-            # old name as twelve question marks (stored map is zeroed)
             app._apply_midimap_name("Hi there")
             await _settle(app, pilot)
             await pilot.pause()
             assert len(device.parameter_writes) - writes_before == 12
             assert len(device.parameter_reads) - reads_before == 12
-            # status reports agreement
             messages = [m for m, _ in said]
             assert any("agree" in m for m in messages), messages
-            # values reflect name
             assert screen._values.get(0) == ord("H")
             assert screen._values.get(1) == ord("i")
-            # undo restores
+
+    async def test_name_write_armed_write_then_z_restores_same_gate(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            app._apply_midimap_name("Hi there")
+            await _settle(app, pilot)
+            await pilot.pause()
+            # undo restores the previous name, through the same gate
             writes_before2 = len(device.parameter_writes)
             app.action_undo()
             await _settle(app, pilot)
             await pilot.pause()
             assert len(device.parameter_writes) - writes_before2 == 12
+
+    async def test_name_write_undo_refused_when_locked(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            app._apply_midimap_name("Hi there")
+            await _settle(app, pilot)
+            await pilot.pause()
+            app._gate.toggle()  # lock again
+            writes_before = len(device.parameter_writes)
+            said = _capture(app)
+            app.action_undo()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) - writes_before == 0
+            assert any("write gate is locked" in m for m, _ in said)
+
+    async def test_name_write_invalid_char_refused_32_127(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm, so only the range check refuses
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            writes_before = len(device.parameter_writes)
+            said = _capture(app)
+            app._apply_midimap_name(chr(1))
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) - writes_before == 0
+            assert any("32-127" in m for m, _ in said)

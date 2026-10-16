@@ -529,8 +529,9 @@ class TestDemoCurrentMidimap:
         dev.read_parameter = silent  # type: ignore[method-assign]
         values = dev.read_scratch_params()
         assert len(values) == 360
-        # read_parameter called 360 times
-        assert len(dev.parameter_reads) == 0 or True
+        # read_scratch_params uses parameter reads only: no 0x46 stored
+        # midimap dump (midimap_reads stays empty).
+        assert dev.midimap_reads == []
         assert values[0] == 7
         assert values[1] == 42
         assert values[5] is None

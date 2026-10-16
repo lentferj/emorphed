@@ -522,6 +522,21 @@ class EmorphedApp(App[None]):
 
     def _apply_midimap_name(self, text: str) -> None:
         """Write a midimap name through twelve parameter writes."""
+        # Gate every character first (offsets 0..11) -- the same gate a single
+        # parameter write goes through. Refuse the whole write on the first
+        # refusal; nothing is sent in that case.
+        padded = (text[:12] if len(text) > 12 else text).ljust(12)
+        for off, char in enumerate(padded):
+            refusal = self._editor.allow(off, ord(char))
+            if refusal is not None:
+                self.notify_status(refusal, refused=True)
+                top = getattr(self, "_edit_screen", None)
+                if top is None:
+                    top = self.screen
+                if top is not None and hasattr(top, "say"):
+                    with contextlib.suppress(Exception):
+                        top.say(refusal, refused=True)
+                return
         if self._busy:
             self.notify_status("busy", refused=True)
             return
@@ -532,6 +547,18 @@ class EmorphedApp(App[None]):
 
     def _apply_name_text(self, text: str) -> None:
         """Restore a name (undo path): writes without a new undo record."""
+        padded = (text[:12] if len(text) > 12 else text).ljust(12)
+        for off, char in enumerate(padded):
+            refusal = self._editor.allow(off, ord(char))
+            if refusal is not None:
+                self.notify_status(refusal, refused=True)
+                top = getattr(self, "_edit_screen", None)
+                if top is None:
+                    top = self.screen
+                if top is not None and hasattr(top, "say"):
+                    with contextlib.suppress(Exception):
+                        top.say(refusal, refused=True)
+                return
         if self._busy:
             self.notify_status("busy", refused=True)
             return
@@ -584,9 +611,12 @@ class EmorphedApp(App[None]):
         finally:
             self._exchange.release()
         if failure is not None:
-            self.call_from_thread(
-                self.notify_status, f"name: {failure}", refused=True
-            )
+            sentence = f"name: {failure}"
+            self.call_from_thread(self.notify_status, sentence, refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    self.call_from_thread(top.say, sentence, refused=True)
             return
         self.call_from_thread(
             self._finish_name_write, new_text, agreed, mismatch

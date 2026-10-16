@@ -93,6 +93,10 @@ class DemoDevice:
         self.parameter_writes: list[tuple[int, int]] = []
         #: Midimap stores observed, in order: (index, words).
         self.midimap_stores: list[tuple[int, list[int]]] = []
+        #: Midimap *reads* (command 0x46 dump) observed, in order: index.
+        #: A parameter round trip never touches this, so a test can prove
+        #: "no stored dump happened" by checking it stayed empty.
+        self.midimap_reads: list[int] = []
         #: The *scratch* midimap edits land in: a parameter write (command
         #: 0x03) edits this, so the live read (command 0x02,
         #: :meth:`read_parameter`) sees the new value.
@@ -194,6 +198,7 @@ class DemoDevice:
                 f"midimap {index}: no card fitted, so the request is "
                 f"ignored outright"
             )
+        self.midimap_reads.append(index)
         return list(self._stored_midimap)
 
     def write_parameter(
