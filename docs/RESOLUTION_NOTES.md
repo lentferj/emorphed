@@ -344,7 +344,7 @@ Midimap, Preset-Bank and Preset List requests only.
 
 **Answered:**
 
-* Version: request `F0 18 0C 07 12 F7` → reply with device ID 7 and body
+* Version: request `F0 18 0C 07 0A F7` → reply with device ID 7 and body
   `02 31 30 33` (firmware read as 2.103). The bridge's request/reply
   matching works against a real unit.
 * A RAM preset read returned the expected **566-byte frame** (body 556),
@@ -363,26 +363,83 @@ Midimap, Preset-Bank and Preset List requests only.
   printed, not decoded. It does not by itself settle TODO item 2 (320 vs
   384) — that needs a card-fitted unit and a decoded response.
 
-**Not answered, and the reason this section exists:**
+**"Not answered" — corrected 2026-10-16:**
 
-* **All three name-list requests timed out** at 2.0 s: `0x12` → no
-  `0x13`, `0x50` → no `0x51`, `0x52` → no `0x53`. §7's "one message gets
-  every name" — the mechanism `r`, `S`, the scan offer and the README's
-  central claim rest on — did not produce a reply on this unit in this run.
-* The bank request's 42 non-final messages were **674 bytes with the object
-  number stepping 0, 3, 6, … and a recomputed checksum that does not
-  match** the last byte. A merged-frames-per-rtmidi-message explanation
-  (one message carrying several concatenated SysEx frames, of which
-  `m.parse()` reads only the first) fits all three symptoms; it is the
-  leading hypothesis and is **not** concluded here. Until a raw capture of
-  one exchange says otherwise, neither the parser nor the request framing
-  should change.
+* **All three name-list requests answered.** The 2026-10-15 result was a
+  **bench defect, not the protocol**: the three hardware tests asked for a
+  streamed list reply on a **2.0 s** timeout. A raw re-run with the
+  timeouts the protocol needs (the deep dive, §20) shows every one replies
+  and parses — `0x12`→`0x13` at 3.73 s (5000 B, 384 names), `0x50`→`0x51`
+  at 2.52 s (3336 B, 256 names), `0x52`→`0x53` at 0.15 s (424 B, 32
+  names). §7's "one message gets every name" stands.
+* The bank request's 42 non-final messages were **674 bytes with the
+  object number stepping 0, 3, 6, … and a recomputed checksum that does
+  not match** the last byte. The deep dive (§20) shows they are **separate
+  messages**, not concatenated frames, each carrying one preset's 556-byte
+  body at offset 8 with 108 unexplained trailing bytes. The bank framing
+  stays the open question, recorded in TODO item 1.
 
-**What this changes in the code: nothing.** The three hardware tests that
-assert a list reply fail deliberately — they encode the manual's claim and
-the claim is now the open question. They are left failing (with named
-reasons in the report) rather than weakened, and `make check` is unaffected
-because the hardware file is opted in. The next step is a raw `0x12`
-exchange captured without a command filter, to separate "the unit does not
-answer `0x12`" from "the reply is dropped in framing" — the 674-byte bank
-messages make the second plausible.
+**What this changes in the code: the test's timeout only.** The 2.0 s
+timeout was the defect and is corrected in the companion commit
+(`2356ba5`); no parser or framing change follows. The hardware file is
+still opted in, so `make check` was never affected.
+
+## 20. The deep dive: list replies work, the bank framing is the open question (2026-10-16)
+
+**Source: this run, not a document.** A read-only probe of the same unit
+(device ID 7) with the timeouts the protocol actually needs, captured
+without a command filter — three raw logs kept outside the checkout at
+`~/temp/diag_morpheus_run1.txt` (arrival times and sizes),
+`~/temp/diag_morpheus_run2.txt` (the list payloads parse; the bank frame
+structure) and `~/temp/diag_morpheus_run3.txt` (which presets the bank
+frames contain). Nothing was written, selected or played.
+
+**The 2026-10-15 "name-list requests did not answer" was a bench defect,
+not a protocol finding.** Given a 40 s window the replies arrive and parse
+exactly:
+
+| request | reply | arrives | size | names |
+| --- | --- | --- | --- | --- |
+| `0x12` preset list | `0x13` | **3.73 s** | 5000 B | **384** |
+| `0x50` hyperpreset list | `0x51` | **2.52 s** | 3336 B | **256** |
+| `0x52` midimap list | `0x53` | **0.15 s** | 424 B | **32** |
+
+Each body is `2 + 13 * count` bytes (run 2: 4994 = 2 + 13×384, 3330 =
+2 + 13×256, 418 = 2 + 13×32, all `match=True`), and every name is exactly
+**twelve printable characters** (`name lengths [12]`). The three
+`test-hardware` tests failed on a **2.0 s test timeout**; `bridge.names()`
+waits **40 s** (`BANK_TIMEOUT`, also the run's "bank timeout: 40.0"), so
+the app was never affected. This settles §7 and TODO item 1's `names()`
+probe: the one-message-gets-every-name mechanism works on hardware.
+
+**ER-2 is settled in the other direction: unnumbered replies carry no
+checksum.** Run 2 reads the last byte of every list body as `0` — the last
+name's `0x00` terminator, not a checksum — and run 1 shows the Version
+reply's trailing byte as `0x33` (`'3'`, the last character of the
+firmware string). `messages.parse` strips nothing for unnumbered messages,
+which the hardware run confirms is correct. The `MISMATCH` lines in the
+2026-10-15 log were the *test* comparing a whole-blob tail against the
+first frame's checksum, not the parser disagreeing with the unit.
+
+**The bank request is answered but its framing is unexplained.** Bank 0
+returns **44 messages, 29440 bytes (~30 kB)**. Forty-two are **674
+bytes**, each a full **556-byte preset body beginning at offset 8** (run
+2: `preset 0 body[:512] found at offset 8`; run 3 confirms the first
+frames carry the presets 0/3/6/9/12/15 read separately) with the object
+number stepping by three (**0, 3, 6, … 123**) and **108 unexplained
+bytes** between the body and the checksum (674 = 8 header + 556 body +
+108 + 2); the trailing byte matches **no** recomputed checksum span: run
+2 recomputes four spans over a 674-byte frame (664 B, 667 B and 556 B
+twice) and **none** equals the byte on the wire (`0x71`). The last two
+messages are clean **566-byte** frames at numbers **126** and **127**
+whose checksums match. So the format is neither the plain preset frame nor
+a fixed-size bank cell; it is **open**, and the app does not use bank
+requests.
+
+**What this changes in the code: nothing but the test.** No parser or
+framing change follows from any of it. The 2.0 s timeout is the defect and
+is corrected in the companion commit (`2356ba5`). The remembered-device-ID
+probe defect (`emu/bridge.py`) is fixed in `801afbf`: the
+remembered port is now probed with the remembered device ID, so the
+misleading "Probing every port" line no longer appears when the
+remembered port is the right one.

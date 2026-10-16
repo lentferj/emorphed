@@ -14,18 +14,24 @@ checksum all agree. Library, bridge and CLI written. 30 tests, all
 synthetic.
 
 **The bench first talked to a Morpheus on 2026-10-15**: version,
-configuration, a preset read and a bank request all answered; the three
-name-list exchanges did not. See "Bench run, 2026-10-15" below.
+configuration, a preset read, a bank request and all three name-list
+exchanges answered. The three tests that failed did so on a 2.0 s test
+timeout, not a protocol problem; the replies arrive in 3.73 s / 2.52 s /
+0.15 s and parse exactly. See "Bench run, 2026-10-15" below and the
+2026-10-16 deep dive in `docs/RESOLUTION_NOTES.md`.
 
 ## Bench run, 2026-10-15 — first contact
 
 A human ran `make test-hardware` on a powered-on Morpheus. Raw output kept
 outside the checkout at `~/temp/hardware_run_vsl042.txt`. **5 passed, 3
-failed**; nothing was written, nothing was selected, nothing played.
+failed**; nothing was written, nothing was selected, nothing played. The
+three failures were a **bench defect**, not a protocol problem: the test
+used a 2.0 s timeout where the streamed reply takes seconds (see the
+2026-10-16 deep dive below).
 
 **Answered (read-only, structural):**
 
-* **Identity** — `Version Request F0 18 0C 07 12 F7` → reply, device ID
+* **Identity** — `Version Request F0 18 0C 07 0A F7` → reply, device ID
   **7**, body `02 31 30 33` (firmware read as 2.103).
 * **Configuration** — 19 bytes returned:
   `00 03 07 72 01 7F 00 00 00 02 46 01 20 00 18 00 08 00`. What is fitted
@@ -35,58 +41,80 @@ failed**; nothing was written, nothing was selected, nothing played.
   path is confirmed on the wire.
 * **Bank request** — the unit *does* answer a whole-bank request: 44
   messages in the 40 s window, the last two clean 566-byte preset frames
-  whose checksums match. **But 42 of the 44 are 674 bytes with the object
-  number stepping 0, 3, 6, … and a last byte that does not match a
-  recomputed checksum.** The leading hypothesis is that one rtmidi message
-  carried several concatenated SysEx frames and `m.parse()` reads only the
-  first — the 674-byte length, the ×3 stride and the "checksum" landing on
-  the last byte of a blob all fit it — but the cause is **not** concluded
-  until one raw capture says so.
+  whose checksums match. The other 42 are 674 bytes, are **separate
+  messages** (the 2026-10-16 deep dive counted them), and their framing
+  is unexplained — see the bank-framing question under item 1. The
+  merged-frames-per-rtmidi-message hypothesis this bullet once leaned on
+  is **withdrawn**: the deep dive's run 1 shows 44 distinct messages.
 * **Timing** — two preset requests `PRESET_GAP` (100 ms) apart were both
   answered; observed spacing **100.1 ms**, total 298.2 ms. First
   measurement in the read direction (item 3).
 
-**Did not answer — the finding that matters:**
+**The three name-list exchanges — corrected by the 2026-10-16 deep dive:**
 
-* **All three name-list requests timed out** (2.0 s each): `0x12`
-  (preset), `0x50` (hyperpreset), `0x52` (midimap) got no
-  `0x13`/`0x51`/`0x53` reply. The one-message-gets-every-name read is the
-  capability this browser, its `r`/`S` keys and the scan offer are built
-  on, and on this unit/firmware it did not arrive.
+* **All three name-list requests answered**, after a longer window than
+  the test allowed: the replies arrive at **3.73 s** (`0x12` → `0x13`,
+  5000 bytes, 384 names), **2.52 s** (`0x50` → `0x51`, 3336 bytes, 256
+  names) and **0.15 s** (`0x52` → `0x53`, 424 bytes, 32 names), and parse
+  exactly — every body is `2 + 13 * count` bytes and every name is twelve
+  printable characters. The one test timeout (2.0 s) is what failed.
 
-**Consequence:** the three hardware tests that assert a list reply are
-**failing on purpose** — they encode the manual's claim, and the run says
-the claim needs work before they can pass. They were not weakened. The next
-step is a raw capture of one `0x12` exchange (all bytes, no command filter)
-to separate "the unit does not answer `0x12`" from "the reply arrives in a
-shape `m.parse`/`request` drops" — the 674-byte bank-request messages above
-make the second live.
+**Consequence:** this was a **bench defect, not a protocol problem.** The
+three hardware tests failed on a 2.0 s timeout where the streamed reply
+takes seconds; `bridge.names()` waits 40 s, so the app itself was never
+affected and the browser, its `r`/`S` keys and the scan offer stand. The
+test fix is the companion commit (`2356ba5`); the deep dive is
+`docs/RESOLUTION_NOTES.md` §20.
+
+**Cosmetic defect, fixed in the same wave:** the deep-dive captures open
+with `"…: remembered, but no Version Request came back on '…' … Probing
+every port (--scan does this on purpose)"` even though the port probed was
+the remembered one. The remembered-port probe was using device ID 0
+instead of the **remembered device ID (7)**, so the unit ignored the
+probe and the launch fell back to the sweep — harmless (the sweep found
+the unit) but a misleading line. Fixed by probing the remembered port
+with the remembered device ID; fixed in `801afbf`.
 
 ## 1. The bridge has never talked to the instrument
 
-**Status:** open, and now narrowed by the 2026-10-15 bench run above.
+**Status:** the identity, name and read probes are answered; the bank
+framing is the open question.
 
 `emu/bridge.py` is complete and unexercised. In order:
 
 * `morphcli status` -- a Version Request is the smallest, safest probe
 * `morphcli names` -- one message, every preset name; if this works the
   browser is essentially done
-* `morphcli read` against a bank request, to see whether a 72 kB reply
-  arrives in one message or several
+* `morphcli read` against a bank request, to see whether the reply arrives
+  in one message or several
 
 Then `autodetect`, whose sweep over sixteen device IDs times every port
 has never been run and may well be too slow to be pleasant.
 
 **Not blocked any more.** The bench talked to the unit on 2026-10-15:
 Version Request, configuration, one preset read and a bank request all
-answered. What the probes above leave open:
+answered.
 
-* `names()` for all three kinds got **no reply** (0x12/0x50/0x52 timed
-  out) — so "if this works the browser is essentially done" is now a
-  question, not an expectation.
-* the bank request arrived as 674-byte messages the parser does not
-  frame-split (number stride 3, no matching checksum); whether a 72 kB
-  reply arrives in one message or several is still unanswered.
+* `names()` -- **ANSWERED 2026-10-16.** All three kinds arrive and parse
+  exactly: preset **384 names** (reply at **3.73 s**, 5000 bytes),
+  hyperpreset **256** (2.52 s, 3336 bytes) and midimap **32** (0.15 s,
+  424 bytes); each body is `2 + 13 * count` bytes and every name is
+  **twelve printable characters**. The 2026-10-15 failures were a **2.0 s
+  test timeout**, not the unit -- `bridge.names()` waits 40 s and the app
+  was never affected. The test fix is the companion commit (`2356ba5`). So
+  "if this works the browser is essentially done" is an expectation again.
+* the bank request is **open**, and is now its own question below.
+
+**Bank framing (raised 2026-10-16).** A whole-bank request for bank 0 is
+answered: **44 messages, 29440 bytes (~30 kB)**. Forty-two of them are
+**674 bytes**, each carrying a full **556-byte preset body beginning at
+offset 8**, with the object number stepping by three (**0, 3, 6, ...
+123**) and **108 unexplained trailing bytes** before the checksum; the
+trailing byte matches **no** recomputed checksum span. The last two are
+clean **566-byte** frames at numbers **126** and **127**, checksums
+matching. So the unit *does* answer a bank request, but the format is
+unexplained and **the app does not use bank requests** -- `morphcli
+read`/`backup` walk presets one at a time instead.
 
 `autodetect`, whose sweep over sixteen device IDs times every port, has
 still never been run and may well be too slow to be pleasant.
@@ -94,8 +122,10 @@ still never been run and may well be too slow to be pleasant.
 The bench is built (T9, `581c4ed`: `tests/test_hardware.py`,
 `tests/conftest.py`, `make test-hardware`); a human ran it 2026-10-15
 (see the bench section above). Its steps cover this item's probes: Version
-round-trip **answered**, `names()` for all three kinds **did not**, and
-`read_preset` checksum recomputation **matched** (566-byte frame, 0x3c).
+round-trip **answered**, `names()` for all three kinds **answered** (the
+2026-10-15 failures were the test's 2.0 s timeout, corrected by the
+2026-10-16 deep dive in `docs/RESOLUTION_NOTES.md`), and `read_preset`
+checksum recomputation **matched** (566-byte frame, 0x3c).
 
 ## 2. Two things in the manual disagree about the card
 
@@ -127,7 +157,10 @@ The bench ran 2026-10-15: two preset requests `PRESET_GAP` (100 ms) apart
 were **both answered**, observed spacing **100.1 ms**, total 298.2 ms.
 That is one observation on one unit, not a tolerance curve — the number
 stays labelled a guess in the code until a sweep says how far it can be
-pushed, but the read direction is no longer unmeasured.
+pushed, but the read direction is no longer unmeasured. That unit reads a
+preset in about **0.2 s** (a single 566-byte frame; the 2026-10-16 deep
+dive saw the first reply at 0.198 s), so the 100.1 ms spacing sat inside a
+fast, complete read — the observation stands.
 
 ## 4. Hyperpresets and midimaps are read but not browsed
 
@@ -227,7 +260,7 @@ nowhere else.
 
 `tools/` being empty is now TODO item 8.
 
-## ER-2 — checksum handling is asymmetric — DOCUMENTED, still a bench question
+## ER-2 — checksum handling is asymmetric — RESOLVED 2026-10-16
 
 **Confirmed.** `parse` strips the trailing byte only for the three
 numbered data messages. Whether an unnumbered reply carries a checksum at
@@ -239,13 +272,17 @@ stripped, what is not, and why -- and item 1 gains the bench step. The
 alternative was to strip uniformly on a hunch, which would silently eat a
 real data byte from every Version reply if the hunch were wrong.
 
-**The bench step ran 2026-10-15** and came back split: the *numbered*
-preset data frames recompute correctly (566-byte read, `0x3c` = `0x3c`),
-while the unnumbered-looking 674-byte bank messages end in a byte that does
-not match a recomputed checksum. That is evidence for the "no checksum on
-unnumbered replies" half and simultaneously leaves the merged-frame
-question open — one raw capture of a bank/list exchange settles it. Nothing
-is stripped differently until then.
+**Resolved 2026-10-16 by the deep dive: unnumbered replies carry no
+checksum.** A list reply's last body byte is the last name's `0x00`
+terminator (preset, hyperpreset and midimap all parse with the last body
+byte `0`), and a Version reply's last data byte is `'3'` (`0x33`) -- the
+last character of the firmware string, not a checksum. `messages.parse`
+strips nothing for unnumbered messages, which the hardware run confirms
+is correct.
+
+The `MISMATCH` lines in the 2026-10-15 log were the **test** comparing a
+whole-blob tail against the first frame's checksum -- not the parser
+disagreeing with the unit. Nothing is stripped differently.
 
 ## ER-3 — the largest modules had no tests — FIXED, and it found a bug
 
@@ -516,8 +553,9 @@ task shipped.
 - **T9 — hardware suite** (`581c4ed`): `tests/conftest.py`,
   `tests/test_hardware.py`, `make test-hardware`. Collection succeeds
   without a device; no agent ran it. A human ran it 2026-10-15 —
-  5 passed, 3 failed (the three name-list replies timed out); see the
-  bench section above.
+  5 passed, 3 failed, all three on a 2.0 s test timeout, not a protocol
+  problem (the replies arrive in 3.73/2.52/0.15 s and parse; corrected by
+  the 2026-10-16 deep dive); see the bench section above.
 - **Bench follow-up (this commit)**: `TODO.md` and
   `docs/RESOLUTION_NOTES.md` record the 2026-10-15 run; no code changed.
 - **T10 — extract tool** (`5af2160`): closes item 8 (see above).
