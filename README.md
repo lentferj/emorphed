@@ -150,21 +150,31 @@ this environment only: `.venv/bin/pip install --no-deps -e ../vinsynlib`.
 
 ## Running it
 
+The package installs two console scripts, `emorphed` (the browser) and
+`morphcli` (the command line). Called through the checkout's environment as
+`.venv/bin/...`, they work without activating anything:
+
 ```
-python -m emorphed.cli regions          # the memory map
-python -m emorphed.cli --demo names     # every name, in one exchange
-python -m emorphed.cli read dump.syx    # read a .syx, verify checksums
-python -m emorphed.cli status           # ask the unit who it is
+.venv/bin/morphcli regions          # the memory map
+.venv/bin/morphcli --demo names     # every name, in one exchange
+.venv/bin/morphcli read dump.syx    # read a .syx, verify checksums
+.venv/bin/morphcli status           # ask the unit who it is
 ```
 
 Browser:
 
 ```
-python -m emorphed                     # the unit remembered in config.toml
-python -m emorphed --demo              # built-in demo device (no MIDI ports)
-python -m emorphed --scan              # probe every port and update config.toml
-python -m emorphed --live-names PATH   # where names read from the unit are kept
+.venv/bin/emorphed                     # the unit remembered in config.toml
+.venv/bin/emorphed --demo              # built-in demo device (no MIDI ports)
+.venv/bin/emorphed --scan              # probe every port and update config.toml
+.venv/bin/emorphed --live-names PATH   # where names read from the unit are kept
 ```
+
+`python -m emorphed.cli …` and `python -m emorphed.app …` also work from a
+checkout, and so do the bare `emorphed` / `morphcli` names once the
+environment is active. `python -m emorphed` does not: the package has no
+`__main__`, by the family's convention that the console scripts are the
+entry points.
 
 `read` checks every dump's checksum, so it can tell you a file is
 *damaged* rather than only that it is the wrong length.
