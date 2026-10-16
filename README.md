@@ -220,7 +220,7 @@ tags, notes, search, device info. Morpheus-specific:
 
 - **Favourites**, with ratings, tags and notes, in SQLite under the per-platform
   data directory. `f` favourites the slot under the cursor, `t`/`n` set tags
-  and note, `*` rates it 0–5. `F` cycles all slots → this bank's favourites →
+  and note, `*` rates it 0–5. `v` cycles all slots → this bank's favourites →
   every favourite; `V` narrows by rating (exactly, or that many and up; stacks
   on top of the view).
 
@@ -251,8 +251,9 @@ tags, notes, search, device info. Morpheus-specific:
 ![Device info screen](docs/screenshots/device.png)
 
 Keys (full set): arrows move (never sends anything); tab switches pane; `⏎`
-select on the unit (presets only); `r` read names; `/` search; `[`/`]`/`c`
-channel; `d` device ID; `f` favourite; `F` favourites view; `t`/`n` tags/note;
+select on the unit (presets and hyperpresets; a midimap is made current
+over SysEx, behind a confirmation); `r` read names; `/` search; `[`/`]`/`c`
+channel; `d` device ID; `f` favourite; `v` favourites view; `t`/`n` tags/note;
 `*` rating; `V` rating filter; `z`/`Z` undo; `k` kind view; `S` scan; `i`
 device info; `?` help; `q` quit.
 

@@ -237,7 +237,7 @@ class TestCursorIsSilent:
         async with app.run_test() as pilot:
             await pilot.pause()
             for _ in range(4):
-                await pilot.press("F")
+                await pilot.press("v")
             await pilot.pause()
             assert device.selected_log == []
 

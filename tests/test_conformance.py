@@ -35,6 +35,19 @@ def test_flags_match_the_family() -> None:
     )
 
 
+#: This tool's own legend blocks, in the family's display order. The legend
+#: is a promise about which keys work, and the app binds every one of these.
+EXTRA_HINTS = (
+    "d device ID",
+    "k kind",
+    "S scan device",
+    "* rating",
+    "V rating filter",
+    "z undo",
+    "Z undo all",
+)
+
+
 def test_keys_match_the_family() -> None:
     # select=False, and the reason is in emorphed/app.py: a focused
     # DataTable consumes Enter for its own row selection, so it arrives as
@@ -42,17 +55,32 @@ def test_keys_match_the_family() -> None:
     # legend promises it; what it cannot be is a BINDINGS entry, because
     # binding it would mean the App taking Enter from the table and every
     # other table key with it. Checked from the other side below.
-    assert not conformance.check_bindings(
+    problems = conformance.check_bindings(
         EmorphedApp, favourites=True, channel=True, select=False
     )
+    # One deliberate divergence: emorphed moves the favourites view off the
+    # family's `F` and onto `v`, exactly as rxved and p2ked do. `f` writes
+    # the favourites database and `F` does not, so the shift-pair left a
+    # write one slip away from a read; `v` has no such twin. The family asks
+    # a tool that renames a shared key to say why in its own test, and these
+    # two lines are the whole of the divergence -- anything else appearing
+    # here is a real drift.
+    assert set(problems) == {
+        "F is not bound; the family binds it to cycle_favorites",
+        "cycle_favorites is not reachable from F; it is bound to v",
+    }, "\n".join(problems)
 
 
 def test_the_legend_matches_the_family() -> None:
     # select=True here even though the binding check above says False: the
-    # legend is a promise about which keys work, and this one does.
-    assert not conformance.check_legend(
-        KEY_HINTS, extras=("d device ID", "k kind")
-    )
+    # legend is a promise about which keys work, and this one does. The two
+    # problems left are the `v` rename the docstring above records and
+    # nothing else.
+    problems = conformance.check_legend(KEY_HINTS, extras=EXTRA_HINTS)
+    assert set(problems) == {
+        "the legend is missing 'F favourites view'",
+        "the legend shows 'v favourites view', which is not in the family's",
+    }, "\n".join(problems)
 
 
 def test_the_vocabulary_is_declared() -> None:

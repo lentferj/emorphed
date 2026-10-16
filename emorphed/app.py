@@ -82,7 +82,7 @@ __all__ = ["KEY_HINTS", "EmorphedApp", "build_parser", "main", "wrap_blocks"]
 
 _SEP = " · "
 
-#: What `F` steps through. The same three the sibling rxved and p2ked use,
+#: What `v` steps through. The same three the sibling rxved and p2ked use,
 #: so the key means the same thing across these projects.
 VIEW_ALL = "all"
 VIEW_BANK_FAVOURITES = "bank-favourites"
@@ -204,7 +204,11 @@ class EmorphedApp(App[None]):
         Binding("c", "pick_channel", "Set channel"),
         Binding("d", "pick_device_id", "Set device ID"),
         Binding("f", "toggle_favorite", "Favourite"),
-        Binding("F", "cycle_favorites", "Favourites view"),
+        # `v`, not the family's `F`: `f` writes the favourites database and
+        # `F` does not, so the family's shift-pair left a write one slip away
+        # from a read. `v` has no such twin. rxved and p2ked made the same
+        # swap; the rename is declared in tests/test_conformance.py.
+        Binding("v", "cycle_favorites", "Favourites view"),
         Binding("t", "edit_tags", "Tags"),
         Binding("n", "edit_note", "Note"),
         Binding("asterisk", "edit_rating", "Rating"),
@@ -1332,7 +1336,7 @@ Keys
   c         set the MIDI channel
   d         set the SysEx device ID -- a different thing
   f         favourite the slot under the cursor
-  F         all slots / favourites here / every favourite
+  v         all slots / favourites here / every favourite
   t n       tags, note
   *         rate the slot under the cursor
   V         rating filter

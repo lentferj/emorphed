@@ -53,5 +53,35 @@ class ReportScreen(_Frame):
 #: on escape. Kept as a name so call sites read exactly as they did.
 
 
+def _view_key(blocks: tuple[str, ...]) -> tuple[str, ...]:
+    """Swap the family's ``F favourites view`` for this tool's ``v``.
+
+    ``f`` writes the favourites database and ``F`` does not, so the family's
+    shift-pair left a write one slip away from a read; ``v`` has no such
+    twin. rxved and p2ked made the same swap, and the family asks a tool
+    that renames a shared key to say why in its own test -- see
+    tests/test_conformance.py, where the whole divergence is two sentences.
+
+    The extras are this tool's own keys: the legend is a promise about which
+    keys work, and the app binds every one of them.
+    """
+    return tuple(
+        "v favourites view" if block == "F favourites view" else block
+        for block in blocks
+    )
+
+
 #: The legend. Every binding the app has, in the order somebody meets them.
-KEY_HINTS = keys.legend(("d device ID", "k kind"))
+KEY_HINTS = _view_key(
+    keys.legend(
+        (
+            "d device ID",
+            "k kind",
+            "S scan device",
+            "* rating",
+            "V rating filter",
+            "z undo",
+            "Z undo all",
+        )
+    )
+)
