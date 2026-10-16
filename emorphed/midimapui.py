@@ -233,7 +233,8 @@ class MidimapEditScreen(ModalScreen[None]):
         on_edit = self._on_edit
 
         # choices step through list
-        if param.choices if param is not None else ():
+        has_choices = param is not None and bool(param.choices)
+        if has_choices:
             low = getattr(param, "low", 0)
             idx = current - low
             if by > 0:

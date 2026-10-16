@@ -47,6 +47,7 @@ from typing import Any
 from emu import banks
 from emu import config as cfg
 from emu import messages as m
+from emu import midimap as mm
 from vinsynlib import midi
 
 __all__ = [
@@ -362,10 +363,12 @@ class MorpheusBridge:
         is accepted for symmetry with the other methods and is unused,
         because Parameter Data carries no reply to wait for.
         """
-        if not 2048 <= param <= 2407:  # noqa: PLR2004
+        _low = mm.PARAM_BASE
+        _high = mm.PARAM_BASE + len(mm.PARAMS) - 1
+        if not _low <= param <= _high:
             raise m.ProtocolError(
                 f"param {param} is outside the midimap parameter range "
-                f"2048-2407 (manual pp. 249-250)"
+                f"{_low}-{_high} (manual pp. 249-250)"
             )
         if not 0 <= value <= 0x3FFF:  # noqa: PLR2004
             raise m.ProtocolError(
@@ -405,10 +408,12 @@ class MorpheusBridge:
         Returns ``None`` when the dump came back short, which is the
         no-card case.
         """
-        if not 2048 <= param <= 2407:  # noqa: PLR2004
+        _low = mm.PARAM_BASE
+        _high = mm.PARAM_BASE + len(mm.PARAMS) - 1
+        if not _low <= param <= _high:
             raise m.ProtocolError(
                 f"param {param} is outside the midimap parameter range "
-                f"2048-2407 (manual pp. 249-250)"
+                f"{_low}-{_high} (manual pp. 249-250)"
             )
         try:
             words = self.read_midimap(self.current_midimap)

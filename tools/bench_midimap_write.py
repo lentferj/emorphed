@@ -116,13 +116,6 @@ def _coerce_int(value: Any, default: int | None = None) -> int | None:
         return default
 
 
-def _coerce_index(kwargs: dict[str, Any]) -> int:
-    for key in ("index", "idx", "midimap", "map", "location", "midimap_index"):
-        if key in kwargs:
-            return int(kwargs[key])
-    return DEFAULT_INDEX
-
-
 def _coerce_old(kwargs: dict[str, Any]) -> int | None:
     for key in (
         "old",
@@ -144,21 +137,6 @@ def _coerce_delta(kwargs: dict[str, Any]) -> int:
             value = _coerce_int(kwargs[key], 1)
             return 1 if value is None else value
     return DEFAULT_DELTA
-
-
-def _coerce_offset_kwargs(kwargs: dict[str, Any]) -> int | None:
-    for key in (
-        "offset",
-        "param_offset",
-        "parameter_offset",
-        "offset_",
-    ):
-        if key in kwargs:
-            return _coerce_offset(kwargs[key])
-    for key in ("param", "parameter", "param_obj", "p"):
-        if key in kwargs:
-            return _coerce_offset(kwargs[key])
-    return None
 
 
 def _finish_plan(index: int, offset: int, old: int | None, delta: int) -> Plan:

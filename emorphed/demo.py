@@ -29,6 +29,7 @@ from typing import Any
 
 from emu import banks
 from emu import messages as m
+from emu import midimap as mm
 
 __all__ = ["DemoDevice", "demo_name"]
 
@@ -189,10 +190,12 @@ class DemoDevice:
         self, param: int, value: int, *, timeout: float | None = None
     ) -> None:
         self._tick()
-        if not 2048 <= param <= 2407:  # noqa: PLR2004
+        _low = mm.PARAM_BASE
+        _high = mm.PARAM_BASE + len(mm.PARAMS) - 1
+        if not _low <= param <= _high:
             raise m.ProtocolError(
                 f"param {param} is outside the midimap parameter range "
-                f"2048-2407 (manual pp. 249-250)"
+                f"{_low}-{_high} (manual pp. 249-250)"
             )
         if not 0 <= value <= 0x3FFF:  # noqa: PLR2004
             raise m.ProtocolError(

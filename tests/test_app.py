@@ -22,7 +22,7 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from textual.pilot import Pilot
@@ -32,7 +32,8 @@ from textual.worker import WorkerFailed
 from emorphed.app import VIEW_ALL_FAVOURITES, EmorphedApp
 from emorphed.demo import DemoDevice
 from emorphed.scan import ScanScreen
-from emorphed.screens import ReportScreen
+from emorphed.screens import PromptScreen, ReportScreen
+from emu import backup as bk
 from emu import banks
 from emu import catalog as cat
 from emu import favorites as fav
@@ -664,3 +665,122 @@ class TestOneExchangeAtATime:
                 await pilot.pause()
             assert isinstance(app.screen, ReportScreen)
             assert not app._exchange.locked()
+
+
+class TestMidimapAppWriteGateAndStore:
+    async def test_gate_locked_edit_sends_nothing(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            said: list[tuple[str, bool]] = []
+            original_say = screen.say
+
+            def captured_say(message: str, *, refused: bool = False) -> None:
+                said.append((message, refused))
+                original_say(message, refused=refused)
+
+            screen.say = captured_say
+            before = len(device.parameter_writes)
+            screen.action_nudge_up()
+            await pilot.pause()
+            assert len(device.parameter_writes) == before
+            assert any("write gate is locked" in msg for msg, _ in said)
+
+            screen.action_toggle_write_gate()
+            await pilot.pause()
+            screen.action_nudge_up()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) == before + 1
+
+    async def test_backup_failure_announced_write_proceeds_flag_stays_false(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls: list[bool] = []
+
+        def boom(*args: Any, **kwargs: Any) -> Any:
+            calls.append(True)
+            raise RuntimeError("backup boom")
+
+        monkeypatch.setattr(bk, "save_midimap", boom)
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            screen.action_toggle_write_gate()
+            before = len(device.parameter_writes)
+            screen.action_nudge_up()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert calls == [True]
+            assert len(device.parameter_writes) == before + 1
+            assert app._midimap_backed_up is False
+            assert any("could not back up" in msg for msg, _ in said)
+
+            stores_before = len(device.midimap_stores)
+            app._store_midimap()
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before
+            assert any("store refused" in msg for msg, _ in said)
+
+    async def test_store_fence_requires_prompt_and_confirmation(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._midimap_backed_up = True
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            app._store_midimap()
+            await pilot.pause()
+            assert isinstance(app.screen, PromptScreen)
+            assert len(device.midimap_stores) == stores_before
+            await pilot.press("5")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            confirm = cast(Any, app.screen)
+            assert "STORE to location 5" in confirm.prompt_text
+            assert "erases" in confirm.prompt_text
+            assert len(device.midimap_stores) == stores_before
+            await pilot.press("escape")
+            await pilot.pause()
+
+    async def test_write_holds_exchange_lock(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        device.latency = 0.2
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            screen.action_toggle_write_gate()
+            await pilot.pause()
+            before = len(device.parameter_writes)
+            screen.action_nudge_up()
+            await pilot.pause(0)
+            capture_list: list[tuple[str, bool]] = []
+            original_notify = app.notify_status
+
+            def capture(message: str, *, refused: bool = False) -> None:
+                capture_list.append((message, refused))
+                original_notify(message, refused=refused)
+
+            app.notify_status = capture  # type: ignore[method-assign]
+            screen.action_nudge_up()
+            await pilot.pause()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) == before + 1

@@ -527,9 +527,12 @@ class EmorphedApp(App[None]):
             "_current_midimap_index",
             getattr(self.device, "current_midimap", 0),
         )
-        words = list(getattr(self, "_current_midimap_words", [])) or list(
-            getattr(self.device, "_midimap", [])
-        )
+        words = list(getattr(self, "_current_midimap_words", []))
+        if not words:
+            try:
+                words = list(self.device.read_midimap(index))
+            except Exception:
+                words = []
 
         def answered(text: str | None) -> None:
             if not text:
