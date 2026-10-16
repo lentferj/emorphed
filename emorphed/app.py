@@ -1287,6 +1287,21 @@ Keys
 """
 
 
+def _say_sweep(bridge: Any) -> None:
+    """One line when the unit was found by a sweep, and silence otherwise.
+
+    A sweep takes minutes on a busy host; saying so, once, is what keeps a
+    slow launch from being mistaken for the normal one.
+    """
+    if not getattr(bridge, "swept", False):
+        return
+    print(
+        f"swept for {bridge.probe_seconds:.1f} s; found "
+        f"{bridge.port} (device {bridge.device_id})",
+        file=sys.stderr,
+    )
+
+
 def _build_line() -> str:
     """One line naming both builds: this tool, and the library under it."""
     parts = []
@@ -1390,11 +1405,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
                     channel=channel,
                     device_id=device_id,
                     scan=args.scan,
-                    on_try=lambda n: print(
-                        f"  probing {n}...", file=sys.stderr
-                    ),
+                    on_try=lambda n: print(f"  probing {n}", file=sys.stderr),
                 )
             device = bridge
+            _say_sweep(bridge)
         except Exception as exc:
             sys.exit(f"error: {exc}")
 

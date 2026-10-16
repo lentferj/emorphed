@@ -59,6 +59,10 @@ class _FakeBridge:
         self.device_id = 0
         self.timeout = b.DEFAULT_TIMEOUT
         self.closed = False
+        #: Set by a real sweep; the fake sets them itself when it stands in
+        #: for one, so assertions can tell a sweep from the fast path.
+        self.swept = False
+        self.probe_seconds = 0.0
 
     def version(self, *, timeout: float | None = None) -> list[int]:
         if not self.answers:
@@ -82,16 +86,24 @@ class _Rig:
         answering: dict[str, bool],
         *,
         ports: list[str] | None = None,
+        answering_on_id: dict[tuple[str, int], bool] | None = None,
     ) -> None:
         self.answering = answering
+        #: A more precise map: this port answers *only* on this device ID.
+        #: Used for the case a unit is there but not on the ID on file.
+        self.answering_on_id = answering_on_id or {}
         self.ports = ports if ports is not None else list(answering)
         self.opened: list[str] = []
         self.tried: list[str] = []
         self.swept = 0
         self.made: list[_FakeBridge] = []
         self.probes: list[tuple[str, int]] = []
+        #: The (device_id, preferred_port) the sweep was called with.
+        self.sweep_calls: list[tuple[int | None, str | None]] = []
 
-    def install(self, monkeypatch: pytest.MonkeyPatch) -> _Rig:
+    def install(
+        self, monkeypatch: pytest.MonkeyPatch, *, stub_autodetect: bool = True
+    ) -> _Rig:
         rig = self
 
         def fake_open(
@@ -109,7 +121,7 @@ class _Rig:
             # bridge.timeout after the call rather than on what went in.
             rig.opened.append(port)
             bridge = _FakeBridge(
-                port, recv_port or port, answers=bool(rig.answering.get(port))
+                port, recv_port or port, answers=rig.answers(port, device_id)
             )
             bridge.device_id = device_id
             bridge.channel = channel
@@ -121,19 +133,31 @@ class _Rig:
             cls: Any,
             *,
             timeout: float = b.PROBE_TIMEOUT,
+            device_id: int | None = None,
+            preferred_port: str | None = None,
             on_try: Callable[[str], None] | None = None,
         ) -> _FakeBridge:
-            # Mirrors the real one's shape -- device ID 0 on every port
-            # first, then widening -- so that the widening is exercised
-            # rather than stubbed away.
+            # Mirrors the real one's order -- the ID we were given first on
+            # every port, then 0, then the rest; ports remembered-first --
+            # so the ordering is exercised rather than stubbed away.
             rig.swept += 1
-            for device_id in (0, *range(1, 16)):
-                for name in rig.ports:
-                    if on_try is not None:
-                        on_try(f"{name} (device {device_id})")
+            rig.sweep_calls.append((device_id, preferred_port))
+            ids: list[int] = []
+            if device_id is not None:
+                ids.append(device_id)
+            if 0 not in ids:
+                ids.append(0)
+            ids.extend(d for d in range(1, 16) if d not in ids)
+            ports = [preferred_port] if preferred_port else []
+            ports += [p for p in rig.ports if p not in ports]
+            for name in ports:
+                if on_try is not None:
+                    on_try(f"{name} (device {', '.join(str(d) for d in ids)})")
+                for device in ids:
                     rig.tried.append(name)
-                    if rig.answering.get(name):
-                        bridge = fake_open(cls, name, device_id=device_id)
+                    if rig.answers(name, device):
+                        bridge = fake_open(cls, name, device_id=device)
+                        bridge.swept = True
                         return bridge
             raise b.DeviceError("nothing answered")
 
@@ -142,10 +166,17 @@ class _Rig:
         )
         monkeypatch.setattr(b, "likely_ports", lambda: [])
         monkeypatch.setattr(b.MorpheusBridge, "open", classmethod(fake_open))
-        monkeypatch.setattr(
-            b.MorpheusBridge, "autodetect", classmethod(fake_autodetect)
-        )
+        if stub_autodetect:
+            monkeypatch.setattr(
+                b.MorpheusBridge, "autodetect", classmethod(fake_autodetect)
+            )
         return rig
+
+    def answers(self, port: str, device: int) -> bool:
+        """Whether a unit answers on this port at this device ID."""
+        if (port, device) in self.answering_on_id:
+            return self.answering_on_id[(port, device)]
+        return bool(self.answering.get(port))
 
     def unclosed(self) -> list[str]:
         """Bridges that were opened and never closed."""
@@ -285,11 +316,14 @@ class TestTheSweep:
         assert rig.swept == 1
         assert bridge.port == OTHER_PORT, "opened the saved port anyway"
 
-    def test_scan_does_not_probe_the_remembered_port_first(
+    def test_scan_sweeps_from_the_remembered_port(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """--scan asks for the sweep, not for a check of the file and then
-        the sweep."""
+        """--scan asks for the sweep, and the sweep still starts where the
+        unit was last seen: the most likely port, and asking it first costs
+        nothing. What --scan skips is the probe-and-trust fast path, not
+        the port.
+        """
         path = _remembered(tmp_path)
         rig = _Rig(
             {OTHER_PORT: True}, ports=[MORPHEUS_PORT, OTHER_PORT]
@@ -297,7 +331,11 @@ class TestTheSweep:
 
         b.MorpheusBridge.connect(config_path=path, scan=True)
 
-        assert rig.opened == [OTHER_PORT], "the saved port was probed first"
+        assert rig.swept == 1
+        assert rig.tried[0] == MORPHEUS_PORT, "the sweep skipped the file"
+        # The only opens are the sweep's own: nothing took the
+        # probe-and-trust fast path before it.
+        assert rig.probes == [(OTHER_PORT, 0)]
 
     def test_a_dead_remembered_port_falls_back_and_says_so(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -428,3 +466,105 @@ class TestRememberedDeviceId:
             "the remembered port was probed under --scan"
         )
         assert rig.opened == [OTHER_PORT]
+
+
+# --- the sweep's order: the point of the 2026-10-16 fix -----------------
+
+
+class TestTheSweepsOrder:
+    """A device-7 unit used to need eight passes over every port.
+
+    The order is now: the ID we were given, then 0, then the rest; the
+    remembered port first. `autodetect` is the real one here (not the
+    stub), because the ordering is what is under test.
+    """
+
+    def test_the_remembered_id_leads_the_sweep(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        path = _remembered(tmp_path)
+        cfg.save_device_id(7, path)
+        rig = _Rig(
+            {OTHER_PORT: True}, ports=[MORPHEUS_PORT, OTHER_PORT]
+        ).install(monkeypatch)
+
+        b.MorpheusBridge.connect(config_path=path, scan=True)
+
+        assert rig.sweep_calls == [(7, MORPHEUS_PORT)]
+
+    def test_the_given_id_is_asked_first_across_ports(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        rig = _Rig(
+            {MORPHEUS_PORT: True}, ports=[OTHER_PORT, MORPHEUS_PORT]
+        ).install(monkeypatch, stub_autodetect=False)
+
+        bridge = b.MorpheusBridge.autodetect(
+            device_id=7, preferred_port=MORPHEUS_PORT
+        )
+
+        assert rig.probes[0] == (MORPHEUS_PORT, 7)
+        assert bridge.port == MORPHEUS_PORT
+        assert bridge.swept is True
+
+    def test_the_preferred_port_is_tried_first(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        rig = _Rig(
+            {MORPHEUS_PORT: True}, ports=[OTHER_PORT, MORPHEUS_PORT]
+        ).install(monkeypatch, stub_autodetect=False)
+
+        b.MorpheusBridge.autodetect(preferred_port=MORPHEUS_PORT)
+
+        assert rig.opened[0] == MORPHEUS_PORT
+
+    def test_zero_is_second_and_the_rest_follow(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """With nothing given, a unit on the default is found in one step
+        and the widening is still finite and in order."""
+        rig = _Rig(
+            {},
+            ports=[MORPHEUS_PORT],
+            answering_on_id={(MORPHEUS_PORT, 3): True},
+        ).install(monkeypatch, stub_autodetect=False)
+
+        b.MorpheusBridge.autodetect()
+
+        assert [device for _port, device in rig.probes] == [0, 1, 2, 3]
+
+    def test_one_line_per_port_names_the_ids(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A slow sweep says what it is doing without 656 lines."""
+        _Rig({MORPHEUS_PORT: True}, ports=[MORPHEUS_PORT, OTHER_PORT]).install(
+            monkeypatch, stub_autodetect=False
+        )
+        said: list[str] = []
+
+        b.MorpheusBridge.autodetect(
+            device_id=7, preferred_port=MORPHEUS_PORT, on_try=said.append
+        )
+
+        assert len(said) == 1, "more than one line for one port"
+        assert said[0].startswith(f"{MORPHEUS_PORT} (device 7, 0, 1, 2")
+
+
+class TestTheProbesShortlist:
+    def test_zero_is_tried_after_a_dead_remembered_id(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A fresh install has no remembered ID and a unit on 0: the probe
+        tries 7 (on file), then 0, and never sweeps."""
+        path = _remembered(tmp_path)
+        cfg.save_device_id(7, path)
+        rig = _Rig({}, answering_on_id={(MORPHEUS_PORT, 0): True}).install(
+            monkeypatch
+        )
+
+        bridge = b.MorpheusBridge.connect(config_path=path)
+
+        assert rig.swept == 0
+        assert rig.probes == [(MORPHEUS_PORT, 7), (MORPHEUS_PORT, 0)]
+        assert bridge.port == MORPHEUS_PORT
+        assert bridge.swept is False

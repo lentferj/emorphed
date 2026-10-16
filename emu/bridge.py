@@ -136,6 +136,11 @@ class MorpheusBridge:
         self.timeout = timeout
         self.port: str | None = None
         self.recv_port: str | None = None
+        #: Whether this bridge came from a port sweep, and how long that
+        #: took. The front ends print one line when it was a sweep; the
+        #: fast path (the remembered pair) stays silent.
+        self.swept = False
+        self.probe_seconds = 0.0
         try:
             self._in.ignore_types(sysex=False, timing=True, active_sense=True)
         except AttributeError:  # a test double
@@ -361,42 +366,12 @@ class MorpheusBridge:
             else cfg.load_port_pair(config_path)
         )
 
-        # The remembered port belongs to whatever unit answered there last
-        # time, and that unit is identified by its SysEx device ID. Probing
-        # it with a different (usually the default, 0) ID silences the one
-        # unit that is actually there, so use the ID remembered alongside it.
-        # Only when nothing has been remembered yet does the probe fall back
-        # to the caller's/default ID, exactly as before.
-        remembered_device_id = device_id
-        if remembered is not None:
-            loaded = cfg.load_device_id(config_path)
-            if loaded is not None:
-                remembered_device_id = loaded
-
-        def probe(send: str, recv: str) -> MorpheusBridge:
-            """One round trip to the named port. Raises if nothing answers."""
-            try:
-                bridge = cls.open(
-                    send,
-                    recv_port=recv,
-                    device_id=remembered_device_id,
-                    channel=channel,
-                    timeout=PROBE_TIMEOUT,
-                )
-            except Exception as exc:
-                raise DeviceError(str(exc)) from exc
-            try:
-                bridge.version(timeout=PROBE_TIMEOUT)
-            except Exception as exc:
-                bridge.close()
-                raise DeviceError(
-                    f"no Version Request came back on {send!r}: {exc}"
-                ) from exc
-            # The discovery timeout must not become the session's: every
-            # later request that does not name its own would run at the
-            # probe's value rather than the working one.
-            bridge.timeout = DEFAULT_TIMEOUT
-            return bridge
+        remembered_device_id = _remembered_id(
+            device_id, remembered, config_path
+        )
+        probe = _probe_factory(
+            cls, channel=channel, device_id=remembered_device_id
+        )
 
         def remember(bridge: MorpheusBridge) -> None:
             if bridge.port and bridge.recv_port:
@@ -404,8 +379,15 @@ class MorpheusBridge:
 
         return midi.open_remembered_or_swept(
             probe=probe,
+            # The sweep asks the device ID it was given (remembered, or the
+            # caller's) before widening, and starts at the remembered port:
+            # a unit that is on file but silent under the default ID is
+            # found in one pass instead of eight.
             sweep=lambda try_hook: cls.autodetect(
-                timeout=PROBE_TIMEOUT, on_try=try_hook
+                timeout=PROBE_TIMEOUT,
+                on_try=try_hook,
+                device_id=remembered_device_id,
+                preferred_port=remembered[0] if remembered else None,
             ),
             remembered=remembered,
             scan=scan,
@@ -418,28 +400,51 @@ class MorpheusBridge:
         cls,
         *,
         timeout: float = PROBE_TIMEOUT,
+        device_id: int | None = None,
+        preferred_port: str | None = None,
         on_try: Callable[[str], None] | None = None,
     ) -> MorpheusBridge:
-        """Find a Morpheus by asking each port, and each device ID, who it is.
+        """Find a Morpheus by asking each port who it is, ID by ID.
 
         Sixteen device IDs times every port is a lot of probing, so the
-        sweep asks ID 0 on every port first and only then widens: a unit
-        left on the default is found quickly, and one that is not is
-        still found.
+        order is the point: the device ID we were given (remembered, or
+        from ``--device-id``) is asked first on every port, then the
+        default 0, then the rest; the ports run remembered-first, then the
+        ones whose names look like the instrument, then the remainder. A
+        unit left on the default, or one whose ID is on file, is therefore
+        found in one pass rather than eight.
+
+        One line per port names the IDs about to be tried there, so a slow
+        sweep says what it is doing instead of printing one line per probe.
         """
         hinted = likely_ports()
         _, outs = list_ports()
-        candidates = hinted + [p for p in outs if p not in hinted]
-        candidates = [p for p in candidates if "Midi Through" not in p]
+        ordered = (
+            ([preferred_port] if preferred_port else [])
+            + hinted
+            + [p for p in outs if p not in hinted]
+        )
+        candidates: list[str] = []
+        for port in ordered:
+            if port in candidates or "Midi Through" in port:
+                continue
+            candidates.append(port)
 
-        for device_id in (0, *range(1, 16)):
-            for port in candidates:
-                if on_try is not None:
-                    on_try(f"{port} (device {device_id})")
+        ids: list[int] = []
+        if device_id is not None:
+            ids.append(device_id)
+        if 0 not in ids:
+            ids.append(0)
+        ids.extend(d for d in range(1, 16) if d not in ids)
+
+        started = time.perf_counter()
+        for port in candidates:
+            if on_try is not None:
+                wanted = ", ".join(str(device) for device in ids)
+                on_try(f"{port} (device {wanted})")
+            for device in ids:
                 try:
-                    bridge = cls.open(
-                        port, device_id=device_id, timeout=timeout
-                    )
+                    bridge = cls.open(port, device_id=device, timeout=timeout)
                 except Exception:
                     continue
                 try:
@@ -448,6 +453,8 @@ class MorpheusBridge:
                     bridge.close()
                     continue
                 bridge.timeout = DEFAULT_TIMEOUT
+                bridge.swept = True
+                bridge.probe_seconds = time.perf_counter() - started
                 return bridge
         raise DeviceError(
             "no Morpheus answered a Version Request on any port at any "
@@ -455,3 +462,86 @@ class MorpheusBridge:
             "chain carries its replies back to this computer as well as "
             "carrying requests out."
         )
+
+
+def _remembered_id(
+    device_id: int,
+    remembered: tuple[str, str] | None,
+    config_path: str,
+) -> int:
+    """The ID a remembered port should be probed with.
+
+    The remembered port belongs to whatever unit answered there last time,
+    and that unit is identified by its SysEx device ID. Probing it with a
+    different (usually the default, 0) ID silences the one unit that is
+    actually there, so use the ID remembered alongside it. Only when
+    nothing has been remembered yet does the probe fall back to the
+    caller's/default ID, exactly as before.
+    """
+    if remembered is not None:
+        loaded = cfg.load_device_id(config_path)
+        if loaded is not None:
+            return loaded
+    return device_id
+
+
+def _probe_factory(
+    cls: type[MorpheusBridge], *, channel: int, device_id: int
+) -> Callable[[str, str], MorpheusBridge]:
+    """The remembered-port probe: the remembered ID, then 0.
+
+    A fresh install has no remembered ID at all and a unit left on the
+    default should still connect without a sweep, so the probe tries the
+    ID on file first and then 0 (`_probe_on` closes a port that stays
+    silent on the way through). If neither answers, raise so the library
+    falls back to the sweep and announces it.
+    """
+
+    def probe(send: str, recv: str) -> MorpheusBridge:
+        attempts = [device_id]
+        if device_id != 0:
+            attempts.append(0)
+        last: Exception | None = None
+        for device in attempts:
+            try:
+                return _probe_on(cls, send, recv, device, channel=channel)
+            except Exception as exc:
+                last = exc
+        raise DeviceError(
+            f"no Version Request came back on {send!r}: {last}"
+        ) from last
+
+    return probe
+
+
+def _probe_on(
+    cls: type[MorpheusBridge],
+    send: str,
+    recv: str,
+    device: int,
+    *,
+    channel: int,
+) -> MorpheusBridge:
+    """One round trip to the named port at the named device ID."""
+    try:
+        bridge = cls.open(
+            send,
+            recv_port=recv,
+            device_id=device,
+            channel=channel,
+            timeout=PROBE_TIMEOUT,
+        )
+    except Exception as exc:
+        raise DeviceError(str(exc)) from exc
+    try:
+        bridge.version(timeout=PROBE_TIMEOUT)
+    except Exception as exc:
+        bridge.close()
+        raise DeviceError(
+            f"device {device}: no Version Request came back"
+        ) from exc
+    # The discovery timeout must not become the session's: every later
+    # request that does not name its own would run at the probe's value
+    # rather than the working one.
+    bridge.timeout = DEFAULT_TIMEOUT
+    return bridge

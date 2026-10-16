@@ -607,10 +607,16 @@ def main(argv: list[str] | None = None) -> int:
                         device_id=device_id,
                         scan=args.scan,
                         on_try=lambda n: print(
-                            f"  probing {n}...", file=sys.stderr
+                            f"  probing {n}", file=sys.stderr
                         ),
                     )
                 device = bridge
+                if getattr(bridge, "swept", False):
+                    print(
+                        f"swept for {bridge.probe_seconds:.1f} s; found "
+                        f"{bridge.port} (device {bridge.device_id})",
+                        file=sys.stderr,
+                    )
                 try:
                     if bridge.port:
                         config.save_last_port(bridge.port, config_path)
