@@ -600,7 +600,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
     parser = vcli.make_parser(
         "bench-midimap-write",
         "Prove a midimap parameter write on a real Morpheus, then put it "
-        "back. REQUIRES --yes; human-attended.",
+        "back. Read-back verified: needs no operator. REQUIRES --yes; "
+        "only --store is destructive and human-attended.",
         distribution="emorphed",
         version="0.1.0",
     )
@@ -647,11 +648,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
 
     args = parser.parse_args(argv)
 
-    # Refuse without a TTY.
-    if not sys.stdin.isatty():
+    # The proof path is READ-BACK VERIFIED and needs no operator: the unit's
+    # own dump is the oracle, exactly as p2ked's hardware write test uses it.
+    # Only --store is destructive enough to need a human in the moment, and
+    # it is the only path that asks anything.
+    if getattr(args, "store", None) is not None and not sys.stdin.isatty():
         raise SystemExit(
-            "error: bench-midimap-write needs an interactive TTY; it "
-            "changes the unit and asks for confirmation"
+            "error: --store needs an interactive TTY: it erases whatever is "
+            "in that location and asks for the location again"
         )
 
     vcli.validate_common(args)
@@ -702,6 +706,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
     backup_id = ""
     step_rows: list[Any] = []
 
+    agreed_write = agreed_restore = False
     try:
         if getattr(bridge, "swept", False):
             print(f"sweep: ports swept in {bridge.probe_seconds:.2f}s")
@@ -733,16 +738,40 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
         else:
             print(f"(2) backup FAILED: {getattr(record, 'error', '')}")
 
-        # (3) nudge one parameter, write, read back.
+        # (3) nudge one parameter, write, read back. The offset asked for is
+        # tried first; if it cannot move (it sits at its limit), the next
+        # benign one is used, because a nudge that changes nothing proves
+        # nothing.
+        tried = [offset] + [
+            emu_midimap.offset_of(label)
+            for label in BENIGN_OFFSETS
+            if emu_midimap.offset_of(label) != offset
+        ]
+        chosen = None
+        for candidate_offset in tried:
+            candidate_raw = (
+                words[candidate_offset] if candidate_offset < len(words) else 0
+            )
+            candidate_old = emu_messages.signed(candidate_raw)
+            candidate_new = movement(
+                emu_midimap.param_at(candidate_offset), candidate_old, delta
+            )
+            if candidate_new is not None:
+                chosen = (
+                    candidate_offset,
+                    candidate_raw,
+                    candidate_old,
+                    candidate_new,
+                )
+                break
+        if chosen is None:
+            print(
+                "(3) no benign parameter can move: every candidate sits at "
+                "its limit, so nothing would be proved. FAIL"
+            )
+            return 1
+        offset, raw_old, old_signed, nudged_signed = chosen
         param = emu_midimap.param_at(offset)
-        raw_old = words[offset] if offset < len(words) else 0
-        old_signed = emu_messages.signed(raw_old)
-        the_plan = plan(
-            offset=offset, old_value=old_signed, delta=delta, index=index
-        )
-        nudged_signed = the_plan.new
-        if nudged_signed is None:
-            nudged_signed = old_signed
         nudged_raw = nudged_signed & 0x3FFF
         spelled_old = emu_midimap.spell(param, old_signed)
         spelled_new = emu_midimap.spell(param, nudged_signed)
@@ -845,7 +874,39 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
     finally:
         bridge.close()
 
+    # The exit code IS the verdict: unattended runs are only useful if a
+    # disagreement fails them. The unit's own dump is the oracle.
+    if not (agreed_write and agreed_restore):
+        print(
+            "VERDICT: FAIL -- a read-back disagreed; the unit did not take "
+            "a write, or did not restore"
+        )
+        return 1
+    print("VERDICT: PASS -- written and restored, both read back and agreed")
     return 0
+
+
+#: Benign parameters the proof may nudge. None of them changes what plays:
+#: volume, pan and mix bus are mix parameters, not the selected object.
+BENIGN_OFFSETS = ("Ch. Volume", "Ch. Pan", "Ch. Mix Bus")
+
+
+def movement(param: Any, old: int, delta: int) -> int | None:
+    """A value inside ``param``'s range that differs from ``old``, or None.
+
+    The first proof run nudged channel 1 volume when it was already 127: the
+    clamp turned the nudge into the same value, the write was a no-op and the
+    read-back agreed with itself. A verification that cannot fail proves
+    nothing, so the direction is chosen by the value and a parameter that
+    cannot move is refused.
+    """
+    if int(delta) == 0:
+        return None
+    for step in (abs(int(delta)), -abs(int(delta))):
+        candidate = int(old) + step
+        if param.low <= candidate <= param.high and candidate != int(old):
+            return candidate
+    return None
 
 
 # Back-compat aliases for the pure helpers.

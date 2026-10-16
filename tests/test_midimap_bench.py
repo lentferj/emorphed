@@ -84,10 +84,16 @@ def test_refuses_without_yes(monkeypatch: pytest.MonkeyPatch) -> None:
         bench.main([])
 
 
-def test_refuses_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_refuses_store_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the destructive store needs a human in the moment.
+
+    The proof path is read-back verified -- the unit's dump is the oracle --
+    so it runs unattended, the way p2ked's hardware write test does.
+    """
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
-    with pytest.raises(SystemExit):
-        bench.main(["--yes"])
+    with pytest.raises(SystemExit) as caught:
+        bench.main(["--yes", "--store", "3"])
+    assert "--store needs an interactive TTY" in str(caught.value)
 
 
 def test_help_exits_zero() -> None:
@@ -102,3 +108,18 @@ def testAliases_and_plan_at_top() -> None:
     assert bench.calculate_plan(offset=14, old_value=1, delta=1).new_value == 2
     assert bench.nudge(127, 1, param=mm.param_at(14)) == 127
     assert bench.clamped(200, mm.param_at(14)) == 127
+
+
+def test_movement_refuses_a_parameter_that_cannot_move() -> None:
+    """The first run nudged volume 127 -> 127: a no-op that 'agreed'.
+
+    A verification that cannot fail proves nothing, so the chooser picks the
+    direction from the value and refuses a parameter at its limit.
+    """
+
+    volume = mm.param_at(mm.offset_of("Ch. Volume"))  # 0-127
+    assert bench.movement(volume, 10, 1) == 11
+    assert bench.movement(volume, 127, 1) == 126, "should step down at the top"
+    assert bench.movement(volume, 0, -1) == 1, "should step up at the bottom"
+    assert bench.movement(volume, 5, 0) is None
+    assert bench.BENIGN_OFFSETS == ("Ch. Volume", "Ch. Pan", "Ch. Mix Bus")
