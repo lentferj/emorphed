@@ -13,7 +13,7 @@
 A ``Midimap`` (command ``0x47``) carries 360 fourteen-bit words: a twelve-
 character name followed by twenty settings for each of sixteen channels and
 a twenty-eight-word global tail. Each word has its own meaning, printed as
-the ``Midimap Data`` table on pages 233-234 of the E-mu Morpheus Operator's
+the ``Midimap Data`` table on pages 233-234 of the E-mu Morpheus Operation
 Manual (1993). Those meanings are transcribed here as :data:`PARAMS`, and
 checked against the parameter list in the sibling edisyn project
 (``EmuMorpheusMap.java``, ``parameters`` array, 360 entries).
