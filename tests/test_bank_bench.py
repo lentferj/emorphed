@@ -77,3 +77,16 @@ def test_help_exits_zero() -> None:
     with pytest.raises(SystemExit) as caught:
         bench.main(["--help"])
     assert caught.value.code == 0
+
+
+def test_sweep_offers_the_option_and_reports_channels() -> None:
+    """The channel sweep exists, and its byte shape is the documented one.
+
+    Added after the 2026-10-16 run: every candidate was ignored because the
+    tool sent on one channel. The sweep asks the unit instead.
+    """
+    assert callable(bench._sweep_channels)
+    # Channel 3 (display) is zero-based 2 on the wire.
+    assert bench.bank_select_bytes(0, 0, 2) == bytes(
+        [0xB0 | 2, 0, 0, 0xB0 | 2, 0x20, 0, 0xC0 | 2, 0]
+    )

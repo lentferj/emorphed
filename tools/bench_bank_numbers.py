@@ -215,6 +215,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
         demo=True,
         yes=True,
     )
+    parser.add_argument(
+        "--sweep-channels",
+        action="store_true",
+        help="find which MIDI channel the unit answers a Program Change on, "
+        "and stop: then run the bank candidates again with --channel N",
+    )
     args = parser.parse_args(argv)
 
     # Refuse without a TTY.
@@ -275,6 +281,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
         preset_names = bridge.names(emu_banks.Kind.PRESET)
         hyper_names = bridge.names(emu_banks.Kind.HYPERPRESET)
 
+        if getattr(args, "sweep_channels", False):
+            return _sweep_channels(bridge, preset_names, channel)
+
         cands = candidates()
         results: list[BenchResult] = []
         total = len(cands)
@@ -303,6 +312,53 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
         bridge.close()
 
     return 0
+
+
+def _sweep_channels(
+    bridge: Any, preset_names: Sequence[str], start: int
+) -> int:
+    """Which channel does the unit actually take a Program Change on?
+
+    The 2026-10-16 first run sent Bank Select + PC on one channel and every
+    candidate was ignored -- which says nothing about the bank numbers and
+    everything about the channel the unit listens on (its MIDI mode and the
+    current Midimap's MIDI Enables both gate it). This asks channel by
+    channel, playing RAM preset 0 each time, until the operator says the
+    preset changed. Order starts at the configured channel, so the common
+    case is answered first.
+    """
+    first = preset_names[0] if preset_names else "the first RAM preset"
+    order = [start] + [c for c in range(16) if c != start]
+    for channel in order:
+        data = bank_select_bytes(0, 0, channel)
+        messages = select_byte_messages(0, 0, channel)
+        print()
+        print(
+            f"channel {channel + 1}: sending "
+            + " ".join(f"{b:02X}" for b in data)
+        )
+        for message in messages:
+            bridge._out.send_message(list(message))
+        try:
+            answer = (
+                input(f"    did it change to {first!r}? [y/N] ")
+                .strip()
+                .lower()
+            )
+        except EOFError:
+            answer = ""
+        if answer in ("y", "yes"):
+            print(
+                f"\nchannel {channel + 1} answers a Program Change. Re-run "
+                f"the bank candidates with: --channel {channel + 1}"
+            )
+            return 0
+    print(
+        "\nno channel changed the preset. Check the unit's MIDI mode "
+        "(Omni listens to all; Poly/Multi use one channel) and the current "
+        "Midimap's MIDI Enables and Program-to-Channel Assign."
+    )
+    return 1
 
 
 if __name__ == "__main__":
