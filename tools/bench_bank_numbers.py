@@ -53,19 +53,32 @@ class Candidate:
     label: str = ""
 
 
-# The five documented bank numbers, with an object that should sit inside
-# one of them (given the manual's program-number table). The pc is the
-# offset *within* the bank (0 = first object of that bank); ``index`` is
-# the object's own global number, used for labelling.
+# The five documented bank numbers, each with the object that is *supposed*
+# to sit inside it -- a hypothesis from the manual's program-number table
+# and the edisyn cross-check, NOT an assumption: the sources disagree about
+# bank 2 (manual: card; edisyn: the card is bank 3), which is the whole
+# reason this tool exists. The pc is the offset *within* the bank (0 = first
+# object of that bank); ``index`` is the object's own global number, used
+# for labelling. The operator's ears decide which label is true.
 _CANDIDATES: tuple[Candidate, ...] = (
-    Candidate(0, 0, Kind.PRESET, 0, "bank 0 (RAM presets), first object"),
-    Candidate(1, 0, Kind.PRESET, 128, "bank 1 (ROM presets), first object"),
+    Candidate(0, 0, Kind.PRESET, 0, "bank 0 (hypothesis: RAM presets)"),
+    Candidate(1, 0, Kind.PRESET, 128, "bank 1 (hypothesis: ROM presets)"),
     Candidate(
-        2, 0, Kind.HYPERPRESET, 0, "bank 2 (RAM hyperpresets), first object"
+        2,
+        0,
+        Kind.HYPERPRESET,
+        0,
+        "bank 2 (hypothesis: RAM hyperpresets -- edisyn says the card)",
     ),
-    Candidate(3, 0, Kind.PRESET, 256, "bank 3 (card presets), first object"),
     Candidate(
-        4, 0, Kind.HYPERPRESET, 128, "bank 4 (card hyperpresets), first object"
+        3,
+        0,
+        Kind.PRESET,
+        256,
+        "bank 3 (hypothesis: card presets -- manual says the card is bank 2)",
+    ),
+    Candidate(
+        4, 0, Kind.HYPERPRESET, 128, "bank 4 (hypothesis: card hyperpresets)"
     ),
 )
 
