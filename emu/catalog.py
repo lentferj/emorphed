@@ -96,6 +96,17 @@ class Catalog(_BaseCatalog):
             legacy.append((bank_id, number, name, disagrees))
         return legacy
 
+    @property
+    def live_count(self) -> int:
+        """How many names are in the live layer.
+
+        Read off the unit and kept in the sidecar, so they survive a
+        restart. Counted here rather than by the caller because the live
+        layer is this class's own state and the browser's status line has
+        to tell "no names at all" from "names from the unit only".
+        """
+        return len(self._live)
+
     def disagreement(
         self, bank_id: str, number: int, writable: bool = False
     ) -> str | None:

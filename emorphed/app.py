@@ -715,12 +715,26 @@ class EmorphedApp(App[None]):
             slots.add_column(label, key=key)
         self._fill(self._current_bank)
         table.focus()
-        self.notify_status(
-            f"{len(self.catalog)} names from the catalog"
-            if self.catalog
-            else "no catalog -- numbers only. Build one with "
-            "tools/extract_catalog.py, or press r to read from the unit."
-        )
+        printed = len(self.catalog)
+        live = self.catalog.live_count
+        if printed and live:
+            self.notify_status(
+                f"{printed} names from the catalog · {live} read from the unit"
+            )
+        elif printed:
+            self.notify_status(f"{printed} names from the catalog")
+        elif live:
+            # Not "no catalog": the unit supplied them, they are kept in
+            # the sidecar, and saying otherwise read as "the scan never
+            # made it" on every startup.
+            self.notify_status(
+                f"{live} names read from the unit (no printed catalog)"
+            )
+        else:
+            self.notify_status(
+                "no names yet -- press r to read the unit, or build a "
+                "catalog with tools/extract_catalog.py"
+            )
         if self._offer_scan:
             self.set_timer(0.6, self._maybe_offer_scan)
 
@@ -1352,8 +1366,15 @@ class EmorphedApp(App[None]):
         self.notify_status(f"read {adopted} {kind} name(s){short}")
 
     def _maybe_offer_scan(self) -> None:
-        """Offer a scan when there is nothing to start from."""
-        if self._demo or self._busy or self.catalog:
+        """Offer a scan when there is nothing to start from.
+
+        "Nothing" means neither layer: a catalog from the generated file
+        *or* names already read from the unit. Offering while the sidecar
+        is full is how the offer came back on every launch.
+        """
+        if self._demo or self._busy:
+            return
+        if self.catalog or self.catalog.live_count:
             return
         from emu import config as _cfg
 

@@ -784,3 +784,58 @@ class TestMidimapAppWriteGateAndStore:
             await _settle(app, pilot)
             await pilot.pause()
             assert len(device.parameter_writes) == before + 1
+
+
+class TestStartupSaysWhereTheNamesCameFrom:
+    """The status line counted only the printed layer.
+
+    With the sidecar full (names read off the unit survive a restart) the
+    browser still said "no catalog" on every launch, and the scan offer came
+    back every time, because both looked at the printed layer alone.
+    """
+
+    async def test_live_names_are_not_reported_as_no_catalog(self) -> None:
+        catalog = cat.empty()
+        catalog.set_live_name("P-RAM", 0, "Invented Name")
+        app = EmorphedApp(DemoDevice(), catalog=catalog)
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+        messages = [message for message, _ in said]
+        assert not any("no catalog" in message for message in messages), (
+            messages
+        )
+        assert any("1 names read from the unit" in m for m in messages), (
+            messages
+        )
+
+    async def test_the_offer_stays_away_when_live_names_exist(self) -> None:
+        catalog = cat.empty()
+        catalog.set_live_name("P-RAM", 0, "Invented Name")
+        app = EmorphedApp(DemoDevice(), catalog=catalog, offer_scan=True)
+        pushed: list[Any] = []
+        original = app.push_screen
+
+        def record(screen: Any, *rest: Any, **kwargs: Any) -> Any:
+            pushed.append(type(screen).__name__)
+            return original(screen, *rest, **kwargs)
+
+        app.push_screen = record  # type: ignore[method-assign]
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._maybe_offer_scan()
+            await pilot.pause()
+        assert "ScanOfferScreen" not in pushed, pushed
+
+    async def test_both_layers_are_counted(self) -> None:
+        catalog = cat.Catalog([cat.Entry("P-ROM", 0, "Printed")])
+        catalog.set_live_name("P-RAM", 0, "Invented Name")
+        app = EmorphedApp(DemoDevice(), catalog=catalog)
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+        messages = [message for message, _ in said]
+        assert any(
+            "1 names from the catalog" in m and "1 read from the unit" in m
+            for m in messages
+        ), messages
