@@ -15,7 +15,7 @@ write path (midimap parameters + store) keeps its own backup and
 read-back (see ``CLAUDE.md``, "Writing is fenced"). What this module does
 is the honest half of a backup that a read-only browser can do: capture a
 preset's own bytes from the unit, write them into the family's JSON
-envelope, and read them back. When writes arrive, the other half --
+envelope, and read them back. When **preset** writes arrive, the other half --
 sending those bytes back -- can be added on top of this without changing
 the format.
 

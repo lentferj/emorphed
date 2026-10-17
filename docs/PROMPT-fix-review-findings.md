@@ -247,8 +247,9 @@ location = int(args.store) if str(args.store).isdigit() else None
 raise SystemExit(...)`), and the app's prompt refuses out-of-range before any
 screen (`emorphed/app.py:828-830`). But `--store 99` proceeds: the preview
 read's `ProtocolError` is swallowed into `<unreadable: …>`, the confirmation
-prompt is shown anyway, and `bridge.send_midimap(99, words)` sets a Game-free
-frame whose only check is fourteen bits (`emu/messages.py:632-633`). This puts
+prompt is shown anyway, and `bridge.send_midimap(99, words)` sends a
+Midimap Data frame whose only structural check is fourteen bits
+(`emu/messages.py:632-633`). This puts
 an invented location on the wire — `CLAUDE.md`: never invent a byte or a
 number.
 

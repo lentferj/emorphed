@@ -237,8 +237,8 @@ one message**, which no sibling can do, and files the flat reply back
 across the regions it spans -- a short reply is reported as "no card
 fitted", which is what it means. Enter selects presets and hyperpresets;
 a midimap is made current over System Exclusive behind a confirmation (a
-Program Change reaches neither midimap nor -- per the 2026-10-16
-measurement -- is there a midimap bank). The
+Program Change reaches neither a midimap nor a midimap bank (no midimap bank
+exists, per the 2026-10-16 measurement)). The
 slot pane shows the SysEx *index* beside the displayed number, and the
 status line says the program number it used is the one that works under
 the default Program Map. `d` sets the SysEx device ID, which this
