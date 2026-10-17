@@ -822,9 +822,12 @@ class TestMidimapAppWriteGateAndStore:
             assert device.midimap_stores[-1][0] == 2
             messages = [m for m, _ in said]
             assert any("stored to M02" in m for m in messages), messages
-            assert any(
-                "(read back 360/360 words agree)" in m for m in messages
-            ), messages
+            assert any("survives a power cycle" in m for m in messages), (
+                messages
+            )
+            assert any("read back 360/360 words" in m for m in messages), (
+                messages
+            )
 
     async def test_store_readback_disagreement_is_refused(
         self,
@@ -1623,3 +1626,43 @@ class TestTheFooterFitsItsText:
             await pilot.pause()
             narrow = app.query_one(KeyHints).size.height
         assert narrow > wide
+
+
+class TestTheStorePersists:
+    """A scratch edit is lost on a power cycle until it is stored (``s``)."""
+
+    async def test_a_rename_backs_up_so_the_store_is_allowed(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm the write gate
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert app._midimap_backed_up is False
+            app._apply_midimap_name("Hello World")
+            await _settle(app, pilot)
+            await pilot.pause()
+            # a rename must take the backup too, or the store is refused
+            assert app._midimap_backed_up is True
+
+    async def test_closing_with_unstored_edits_warns(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm the write gate
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            table = screen.query_one("#midimap-table", DataTable)
+            table.move_cursor(row=screen._ordered.index("ch1"), column=0)
+            screen.action_nudge_up()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert app._midimap_unstored is True
+            screen.action_close()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)

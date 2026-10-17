@@ -324,6 +324,9 @@ class EmorphedApp(App[None]):
         self._allow_write = allow_write
         #: Whether a midimap backup has succeeded this session.
         self._midimap_backed_up = False
+        #: Whether scratch edits have been made this session and not yet
+        #: stored. Drives the close-time warning.
+        self._midimap_unstored = False
         #: Raised by the scan modal's Cancel and checked between kinds.
         self._scan_cancel = threading.Event()
         self.view_mode = VIEW_ALL
@@ -547,7 +550,7 @@ class EmorphedApp(App[None]):
                 top.say(msg)
         self.notify_status(msg)
 
-    def _open_midimap_screen(
+    def _open_midimap_screen(  # noqa: C901, PLR0915
         self, index: int, words: list[int], assumed: bool = False
     ) -> None:
         self._current_midimap_index = index
@@ -587,6 +590,48 @@ class EmorphedApp(App[None]):
 
         screen = MidimapEditScreen(editor, params, **ui_kwargs)
         self._edit_screen = screen
+        self._midimap_unstored = False
+        self._mark_midimap_unstored(False)
+
+        original_close = screen.action_close
+
+        def _guarded_close() -> None:
+            unstored = (
+                bool(self._midimap_unstored)
+                or bool(getattr(screen, "_unstored", False))
+                or bool(getattr(screen, "unstored", False))
+            )
+            if not unstored:
+                original_close()
+                return
+            sentence = (
+                "scratch edits are not stored; they will be lost on a "
+                "power cycle"
+            )
+            self.notify_status(sentence, refused=True)
+            if hasattr(screen, "say"):
+                with contextlib.suppress(Exception):
+                    screen.say(sentence, refused=True)
+
+            def answered(confirmed: bool | None) -> None:
+                if confirmed:
+                    self._midimap_unstored = False
+                    if hasattr(screen, "set_unstored"):
+                        with contextlib.suppress(Exception):
+                            screen.set_unstored(False)
+                    with contextlib.suppress(Exception):
+                        screen.dismiss(None)
+
+            self.push_screen(
+                ConfirmScreen(
+                    "Closing now discards the scratch edits made this "
+                    "session; they are not stored and will be lost on a "
+                    "power cycle"
+                ),
+                answered,
+            )
+
+        screen.action_close = _guarded_close  # type: ignore[method-assign]
         self.push_screen(screen)
         if assumed:
             msg = f"midimap {index} (assumed -- nothing selected this session)"
@@ -665,6 +710,7 @@ class EmorphedApp(App[None]):
         new_text = text
         try:
             with self._busy_gate:
+                self._backup_before_write()
                 words = list(
                     getattr(self, "_current_midimap_words", None) or [0] * 360
                 )
@@ -731,6 +777,7 @@ class EmorphedApp(App[None]):
         shown_name = literal(new_text)
         if agreed:
             msg = f"name written: {shown_name!r}; read-back agreed (12/12)"
+            self._mark_midimap_unstored(True)
         else:
             msg = (
                 f"name written: {shown_name!r}; read-back disagreed "
@@ -945,6 +992,7 @@ class EmorphedApp(App[None]):
                             old_number if old_number is not None else number,
                         )
                     )
+                self._mark_midimap_unstored(True)
                 sentence = (
                     f"channel {channel} preset written: "
                     f"bank {bank}, program {number}; read-back agreed"
@@ -973,6 +1021,14 @@ class EmorphedApp(App[None]):
         if top is not None and hasattr(top, "say"):
             with contextlib.suppress(Exception):
                 top.say(sentence, refused=refused)
+
+    def _mark_midimap_unstored(self, value: bool) -> None:
+        """Track scratch edits and tell the editor screen (defensively)."""
+        self._midimap_unstored = value
+        screen = getattr(self, "_edit_screen", None)
+        if screen is not None and hasattr(screen, "set_unstored"):
+            with contextlib.suppress(Exception):
+                screen.set_unstored(value)
 
     def _backup_before_write(self) -> None:
         if self._midimap_backed_up:
@@ -1038,21 +1094,19 @@ class EmorphedApp(App[None]):
         # update current words
         if ok and getattr(self, "_current_midimap_words", None) is not None:
             self._current_midimap_words[offset] = value
+        if ok:
+            self._mark_midimap_unstored(True)
 
-    def _store_midimap(self) -> None:
+    def _store_midimap(self) -> None:  # noqa: C901
         if not self._midimap_backed_up:
-            self.notify_status(
-                "store refused: no midimap backup this session", refused=True
-            )
-            top = self.screen
-            if hasattr(top, "say"):
-                try:
-                    top.say(
-                        "store refused: no midimap backup this session",
-                        refused=True,
-                    )
-                except Exception:  # noqa: S110
-                    pass
+            sentence = "store refused: no midimap backup this session"
+            self.notify_status(sentence, refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is None:
+                top = self.screen
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    top.say(sentence, refused=True)
             return
         _idx = getattr(self, "_current_midimap_index", None)
         if _idx is None:
@@ -1067,12 +1121,24 @@ class EmorphedApp(App[None]):
             try:
                 loc = int(text)
             except ValueError:
-                self.notify_status(
-                    f"{literal(text)!r} is not a number", refused=True
-                )
+                sentence = f"{literal(text)!r} is not a number"
+                self.notify_status(sentence, refused=True)
+                top = getattr(self, "_edit_screen", None)
+                if top is None:
+                    top = self.screen
+                if top is not None and hasattr(top, "say"):
+                    with contextlib.suppress(Exception):
+                        top.say(sentence, refused=True)
                 return
             if not 0 <= loc <= 31:
-                self.notify_status("a midimap location is 0-31", refused=True)
+                sentence = "a midimap location is 0-31"
+                self.notify_status(sentence, refused=True)
+                top = getattr(self, "_edit_screen", None)
+                if top is None:
+                    top = self.screen
+                if top is not None and hasattr(top, "say"):
+                    with contextlib.suppress(Exception):
+                        top.say(sentence, refused=True)
                 return
             self.push_screen(
                 ConfirmScreen(
@@ -1100,9 +1166,21 @@ class EmorphedApp(App[None]):
             return
         if self._busy:
             self.notify_status("busy", refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is None:
+                top = self.screen
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    top.say("busy", refused=True)
             return
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is None:
+                top = self.screen
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    top.say("busy", refused=True)
             return
         self._store_midimap_worker(loc, words, index=index)
 
@@ -1112,59 +1190,75 @@ class EmorphedApp(App[None]):
     ) -> None:
         failure = None
         stored: list[int] | None = None
+        final_words = list(words)
         try:
             with self._busy_gate:
-                if not words:
+                if not final_words:
                     try:
-                        words = list(self.device.read_midimap(index or 0))
+                        final_words = list(
+                            self.device.read_midimap(
+                                0 if index is None else index
+                            )
+                        )
                     except Exception:
-                        words = []
-                self.device.send_midimap(loc, words)
+                        final_words = []
+                self.device.send_midimap(loc, final_words)
                 stored = list(self.device.read_midimap(loc))
         except _BRIDGE_ERRORS as exc:
             failure = exc
         finally:
             self._exchange.release()
-        if failure is not None:
-            self.call_from_thread(
-                self.notify_status, f"store: {failure}", refused=True
-            )
-            return
-        stored_list = stored if stored is not None else []
-        total = len(words)
-        if stored is None or total == 0 or len(stored_list) != total:
-            self.call_from_thread(
-                self.notify_status,
-                (
-                    f"store to M{loc:02d}: read-back was "
-                    f"{len(stored_list)} words, not {total}"
-                ),
-                refused=True,
-            )
-            return
-        agreed = sum(
-            1
-            for sent, got in zip(words, stored_list, strict=False)
-            if sent == got
+        self.call_from_thread(
+            self._finish_store, loc, final_words, stored, failure
         )
-        full = agreed == total and total > 0
-        if full:
-            self.call_from_thread(
-                self.notify_status,
-                (
-                    f"stored to M{loc:02d} "
-                    f"(read back {agreed}/{total} words agree)"
-                ),
-            )
+
+    def _finish_store(
+        self,
+        loc: int,
+        words: list[int],
+        stored: list[int] | None,
+        failure: BaseException | None,
+    ) -> None:
+        top = getattr(self, "_edit_screen", None)
+        if top is None:
+            top = self.screen
+        if failure is not None:
+            sentence = f"store: {failure}"
+            refused = True
         else:
-            self.call_from_thread(
-                self.notify_status,
-                (
-                    f"store to M{loc:02d}: read-back disagreed "
-                    f"({agreed}/{total} words agree)"
-                ),
-                refused=True,
-            )
+            stored_list = stored if stored is not None else []
+            total = len(words)
+            if stored is None or total == 0 or len(stored_list) != total:
+                sentence = (
+                    f"store to M{loc:02d}: read-back was "
+                    f"{len(stored_list)} words, not {total}; "
+                    "did not take it"
+                )
+                refused = True
+            else:
+                agreed = sum(
+                    1
+                    for sent, got in zip(words, stored_list, strict=False)
+                    if sent == got
+                )
+                if agreed == total and total > 0:
+                    sentence = (
+                        f"stored to M{loc:02d} -- survives a power cycle "
+                        f"(read back {agreed}/{total} words)"
+                    )
+                    refused = False
+                else:
+                    sentence = (
+                        f"store to M{loc:02d}: read-back disagreed "
+                        f"({agreed}/{total} words agree); did not take it"
+                    )
+                    refused = True
+        self.notify_status(sentence, refused=refused)
+        if top is not None and hasattr(top, "say"):
+            with contextlib.suppress(Exception):
+                top.say(sentence, refused=refused)
+        if not refused:
+            self._mark_midimap_unstored(False)
 
     def action_undo(self) -> None:
         self._undo_master_edits(1)
