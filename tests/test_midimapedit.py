@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from emorphed import edit as E
 from emorphed.demo import DemoDevice
 from emu import messages as m
@@ -108,6 +110,18 @@ def test_edit_gate_toggle_describe() -> None:
 def test_demo_send_midimap() -> None:
     words = [5] * 360
     dev = DemoDevice()
+    dev.send_midimap(2, words)
+    assert dev.midimap_stores[-1] == (2, words)
+    assert dev.read_midimap(2) == words
+
+
+def test_demo_send_midimap_word_count() -> None:
+    dev = DemoDevice()
+    short = [5] * 359
+    with pytest.raises(m.ProtocolError):
+        dev.send_midimap(2, short)
+    # a 360-word map still stores and reads back
+    words = [7] * 360
     dev.send_midimap(2, words)
     assert dev.midimap_stores[-1] == (2, words)
     assert dev.read_midimap(2) == words

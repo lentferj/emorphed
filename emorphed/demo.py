@@ -246,6 +246,10 @@ class DemoDevice:
             raise m.ProtocolError(
                 f"midimap {index} is outside 0-31 (16 RAM + 16 card)"
             )
+        if len(words) != 360:  # noqa: PLR2004
+            raise m.ProtocolError(
+                f"a midimap body is 360 words; got {len(words)}"
+            )
         stored = list(words)
         self.midimap_stores.append((index, stored))
         #: A store makes this map the live (scratch) map when its location
