@@ -854,6 +854,154 @@ class TestStartupSaysWhereTheNamesCameFrom:
             for m in messages
         ), messages
 
+    async def test_store_confirmed_runs_worker_and_records_one_send(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._midimap_backed_up = True
+        words = [5] * 360
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            app._store_confirmed(2, words, True)
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.midimap_stores) - stores_before == 1
+            assert device.midimap_stores[-1][0] == 2
+            messages = [m for m, _ in said]
+            assert any("stored to M02" in m for m in messages), messages
+            assert any(
+                "(read back 360/360 words agree)" in m for m in messages
+            ), messages
+
+    async def test_store_readback_disagreement_is_refused(
+        self,
+        app: "EmorphedApp",
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        app._midimap_backed_up = True
+        words = [5] * 360
+
+        def changed(index: int, *, timeout: float | None = None) -> list[int]:
+            out = list(words)
+            out[0] = 999
+            return out
+
+        monkeypatch.setattr(device, "read_midimap", changed)
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            app._store_confirmed(2, words, True)
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.midimap_stores) - stores_before == 1
+            messages = [m for m, _ in said]
+            assert any("disagree" in m.lower() for m in messages), messages
+            assert not any(
+                "(read back 360/360 words agree)" in m for m in messages
+            ), messages
+            assert any(
+                refused and "disagree" in msg.lower() for msg, refused in said
+            ), said
+
+    async def test_store_confirmed_false_sends_nothing(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._midimap_backed_up = True
+        words = [5] * 360
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            app._store_confirmed(2, words, False)
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before
+
+    async def test_store_confirmed_none_sends_nothing(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._midimap_backed_up = True
+        words = [5] * 360
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            app._store_confirmed(2, words, None)
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before
+
+    async def test_store_location_prompt_refuses_non_number(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._midimap_backed_up = True
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            said = _capture(app)
+            app._store_midimap()
+            await pilot.pause()
+            assert isinstance(app.screen, PromptScreen)
+            await pilot.press("a")
+            await pilot.press("b")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before
+            assert not isinstance(app.screen, ConfirmScreen)
+            assert any("is not a number" in msg for msg, _ in said), said
+
+    async def test_store_location_prompt_refuses_out_of_range(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._midimap_backed_up = True
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            said = _capture(app)
+            app._store_midimap()
+            await pilot.pause()
+            assert isinstance(app.screen, PromptScreen)
+            await pilot.press("9")
+            await pilot.press("9")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before
+            assert not isinstance(app.screen, ConfirmScreen)
+            assert any("0-31" in msg for msg, _ in said), said
+
+
+class TestMidimapParamUndo:
+    async def test_param_write_armed_then_z_restores_previous_value(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            screen.query_one("#midimap-table", DataTable).move_cursor(
+                row=1, column=2
+            )
+            said = _capture(app)
+            writes_before = len(device.parameter_writes)
+            screen.action_nudge_up()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) - writes_before == 1
+            param, written = device.parameter_writes[-1]
+            assert written != 0
+
+            writes_before2 = len(device.parameter_writes)
+            app.action_undo()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) - writes_before2 == 1
+            assert device.parameter_writes[-1][0] == param
+            assert device.parameter_writes[-1][1] == 0
+            assert device.read_parameter(param) == 0
+            assert not any(refused for _, refused in said), said
+
 
 class TestMidimapCurrentIndexAndScratch:
     async def test_current_midimap_none_then_number(

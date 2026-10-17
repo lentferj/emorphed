@@ -856,10 +856,11 @@ class EmorphedApp(App[None]):
     @work(thread=True)
     def _store_midimap_worker(self, loc: int, words: list[int]) -> None:
         failure = None
+        stored: list[int] | None = None
         try:
             with self._busy_gate:
                 self.device.send_midimap(loc, words)
-                _ = self.device.read_midimap(loc)
+                stored = list(self.device.read_midimap(loc))
         except _BRIDGE_ERRORS as exc:
             failure = exc
         finally:
@@ -868,8 +869,36 @@ class EmorphedApp(App[None]):
             self.call_from_thread(
                 self.notify_status, f"store: {failure}", refused=True
             )
+            return
+        stored_list = stored if stored is not None else []
+        agreed = sum(
+            1
+            for sent, got in zip(words, stored_list, strict=False)
+            if sent == got
+        )
+        total = len(words)
+        full = (
+            stored is not None
+            and len(stored_list) == total
+            and agreed == total
+        )
+        if full:
+            self.call_from_thread(
+                self.notify_status,
+                (
+                    f"stored to M{loc:02d} "
+                    f"(read back {agreed}/{total} words agree)"
+                ),
+            )
         else:
-            self.call_from_thread(self.notify_status, f"stored to M{loc:02d}")
+            self.call_from_thread(
+                self.notify_status,
+                (
+                    f"store to M{loc:02d}: read-back disagreed "
+                    f"({agreed}/{total} words agree)"
+                ),
+                refused=True,
+            )
 
     def action_undo(self) -> None:
         self._undo_master_edits(1)
