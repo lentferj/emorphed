@@ -276,3 +276,76 @@ def test_fx_params_fallback_for_effectless_types() -> None:
     assert midimap.fx_params_for(0) == fallback
     assert midimap.fx_params_for(128) == fallback
     assert midimap.fx_params_for(129) == fallback
+
+
+def test_channel_offsets_first_and_last() -> None:
+    # manual p.232: channel 1 at 12, channel 16 at 12 + 15*20 = 312.
+    assert midimap.channel_program_offset(1) == 12  # noqa: PLR2004
+    assert midimap.channel_bank_offset(1) == 13  # noqa: PLR2004
+    assert midimap.channel_program_offset(16) == 312  # noqa: PLR2004
+    assert midimap.channel_bank_offset(16) == 313  # noqa: PLR2004
+    # the offsets land on the labels PARAMS records.
+    assert midimap.param_at(midimap.channel_program_offset(9)).label == (
+        "Ch. Program"
+    )
+    assert midimap.param_at(midimap.channel_bank_offset(9)).label == (
+        "Ch. Bank"
+    )
+
+
+def test_channel_banks_table() -> None:
+    # manual p.232 Ch. Bank 0-4 -> emu.banks.REGIONS ids.
+    assert midimap.CHANNEL_BANKS == (
+        "P-RAM",
+        "P-ROM",
+        "H-RAM",
+        "P-CARD",
+        "H-CARD",
+    )
+    for word, region_id in enumerate(midimap.CHANNEL_BANKS):
+        assert midimap.channel_bank(word) == region_id
+
+
+def test_step_channel_preset_rolls_forward() -> None:
+    # the user's example: Bank 1 / Preset 127 + -> Bank 2 / Preset 0.
+    assert midimap.step_channel_preset(1, 127, 1) == (2, 0)
+
+
+def test_step_channel_preset_rolls_backward() -> None:
+    assert midimap.step_channel_preset(2, 0, -1) == (1, 127)
+
+
+def test_step_channel_preset_step_within_bank() -> None:
+    assert midimap.step_channel_preset(0, 5, 1) == (0, 6)
+    assert midimap.step_channel_preset(0, 5, -1) == (0, 4)
+
+
+def test_step_channel_preset_clamps_four_ends() -> None:
+    # the ends clamp rather than wrap past bank 4 / 127 or below bank 0 / 0.
+    assert midimap.step_channel_preset(4, 127, 1) == (4, 127)
+    assert midimap.step_channel_preset(0, 0, -1) == (0, 0)
+    assert midimap.step_channel_preset(4, 127, 1000) == (4, 127)
+    assert midimap.step_channel_preset(0, 0, -1000) == (0, 0)
+
+
+def test_channel_offset_refuses_out_of_range() -> None:
+    for channel in (0, 17, -1):
+        with pytest.raises(ValueError, match="1-16"):
+            midimap.channel_program_offset(channel)
+        with pytest.raises(ValueError, match="1-16"):
+            midimap.channel_bank_offset(channel)
+
+
+def test_channel_bank_refuses_out_of_range() -> None:
+    for bank in (5, -1):
+        with pytest.raises(ValueError, match="0-4"):
+            midimap.channel_bank(bank)
+
+
+def test_step_channel_preset_refuses_out_of_range() -> None:
+    for bank in (5, -1):
+        with pytest.raises(ValueError, match="0-4"):
+            midimap.step_channel_preset(bank, 0, 1)
+    for number in (128, -1):
+        with pytest.raises(ValueError, match="0-127"):
+            midimap.step_channel_preset(0, number, 1)

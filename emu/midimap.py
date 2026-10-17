@@ -34,10 +34,14 @@ from dataclasses import dataclass
 from emu import messages as m
 
 __all__ = [
+    "CHANNEL_BANKS",
     "FX_PARAMS",
     "PARAMS",
     "PARAM_BASE",
     "Param",
+    "channel_bank",
+    "channel_bank_offset",
+    "channel_program_offset",
     "choices_for",
     "fx_params",
     "fx_params_for",
@@ -47,6 +51,7 @@ __all__ = [
     "parse_dump",
     "set_name",
     "spell",
+    "step_channel_preset",
     "values_for",
 ]
 
@@ -90,6 +95,31 @@ _PROGRAM_BANKS: tuple[str, ...] = (
     "Card Presets",
     "Card Hypers",
 )
+
+#: The region each channel ``Ch. Bank`` word names, in word order.
+#: Transcribed from the ``Ch. Bank`` row of the Midimap Data table (manual
+#: p.232, offset ``base+1``, "0-4", whose choices are :data:`_PROGRAM_BANKS`):
+#: 0 RAM Presets, 1 ROM Presets, 2 RAM Hypers, 3 Card Presets, 4 Card Hypers.
+#: The ids are the region ids of :data:`emu.banks.REGIONS`.
+CHANNEL_BANKS: tuple[str, ...] = (
+    "P-RAM",
+    "P-ROM",
+    "H-RAM",
+    "P-CARD",
+    "H-CARD",
+)
+
+# The channel block geometry: sixteen blocks of twenty words from offset 12
+# (manual p.232, "... for 16 channels (20 parms each)"; see _CHANNEL_BLOCK).
+_CHANNELS_PER_MIDIMAP = 16
+_CHANNEL_STRIDE = 20
+_CHANNEL_FIRST_OFFSET = 12
+
+#: Presets in one preset bank; the eight-bit width a ``Ch. Program`` word has.
+_PRESETS_PER_BANK = 128
+
+#: The combined-index range the five preset banks span (0-639).
+_COMBINED_PRESETS = len(CHANNEL_BANKS) * _PRESETS_PER_BANK
 
 _MIX_BUS: tuple[str, ...] = (
     "Preset",
@@ -385,6 +415,79 @@ _CHANNEL_BLOCK: tuple[tuple[str, int, int, tuple[str, ...]], ...] = (
     ("Ch. Ftsw. 2 Enbl", 0, 1, _OFF_ON),
     ("Ch. Ftsw. 3 Enbl", 0, 1, _OFF_ON),
 )
+
+
+def _channel_base(channel: int) -> int:
+    # Channel n (1..16) occupies the twenty words at 12 + (n-1)*20 .. +19
+    # (manual p.232, "for 16 channels (20 parms each)"; see _CHANNEL_BLOCK).
+    if not 1 <= channel <= _CHANNELS_PER_MIDIMAP:
+        raise ValueError(
+            f"channel {channel} is outside 1-{_CHANNELS_PER_MIDIMAP}"
+        )
+    return _CHANNEL_FIRST_OFFSET + (channel - 1) * _CHANNEL_STRIDE
+
+
+def channel_program_offset(channel: int) -> int:
+    """The midimap offset of ``channel``'s ``Ch. Program`` word.
+
+    Channel ``n`` (1..16) occupies ``base .. base+19``, where
+    ``base = 12 + (n-1)*20`` (manual p.232, "... for 16 channels (20 parms
+    each)"; see :data:`_CHANNEL_BLOCK`). ``Ch. Program`` is the block's
+    first word, ``base+0`` (0-127, the slot number). A channel outside
+    1-16 is refused with a message naming the range.
+    """
+    return _channel_base(channel)
+
+
+def channel_bank_offset(channel: int) -> int:
+    """The midimap offset of ``channel``'s ``Ch. Bank`` word.
+
+    That is ``base+1`` of the channel block whose ``base`` is
+    :func:`channel_program_offset` returns; the word is the bank number
+    0-4 (manual p.232, ``Ch. Bank`` "0-4"). A channel outside 1-16 is
+    refused with a message naming the range.
+    """
+    return _channel_base(channel) + 1
+
+
+def channel_bank(bank: int) -> str:
+    """The region id a channel's ``Ch. Bank`` word (0-4) names.
+
+    The five words name, in order, RAM Presets, ROM Presets, RAM Hypers,
+    Card Presets and Card Hypers (manual p.232, ``Ch. Bank`` "0-4"; the
+    same order as :data:`_PROGRAM_BANKS`). They are the region ids
+    ``P-RAM``, ``P-ROM``, ``H-RAM``, ``P-CARD`` and ``H-CARD`` of
+    :data:`emu.banks.REGIONS`. A word outside 0-4 is refused with a
+    message naming the range.
+    """
+    if not 0 <= bank < len(CHANNEL_BANKS):
+        raise ValueError(
+            f"bank word {bank} is outside 0-{len(CHANNEL_BANKS) - 1}"
+        )
+    return CHANNEL_BANKS[bank]
+
+
+def step_channel_preset(bank: int, number: int, delta: int) -> tuple[int, int]:
+    """Step a channel's preset by ``delta``, rolling between banks.
+
+    A channel's preset is the pair ``(bank, number)``: the ``Ch. Bank``
+    word 0-4 (see :func:`channel_bank`) and the ``Ch. Program`` number
+    0-127. Their combined index is ``bank*128 + number`` (0-639), the
+    single number ``+`` and ``-`` walk. The program word is eight bits, so
+    ``+`` at ``bank 1 / 127`` rolls into ``bank 2 / 0`` and ``-`` at
+    ``bank 2 / 0`` rolls back to ``bank 1 / 127``. The combined index is
+    clamped to ``0..639``, so the ends do not wrap past ``bank 4 / 127`` or
+    below ``bank 0 / 0``. A bank outside 0-4 or a number outside 0-127 is
+    refused with a message naming the range.
+    """
+    # Refuse through the same checks the pair helpers use.
+    channel_bank(bank)
+    if not 0 <= number < _PRESETS_PER_BANK:
+        raise ValueError(f"preset number {number} is outside 0-127")
+    combined = bank * _PRESETS_PER_BANK + number
+    stepped = min(max(combined + delta, 0), _COMBINED_PRESETS - 1)
+    return divmod(stepped, _PRESETS_PER_BANK)
+
 
 _PROG_MAP_CHOICES: tuple[str, ...] = ("None", "0", "1", "2", "3")
 

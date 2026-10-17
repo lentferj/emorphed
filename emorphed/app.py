@@ -67,6 +67,7 @@ from emorphed.scan import SCAN_OFFER, ScanOfferScreen, ScanScreen
 from emorphed.screens import (
     KEY_HINTS,
     KeyHints,
+    PresetPickerScreen,
     PromptScreen,
     ReportScreen,
 )
@@ -181,6 +182,19 @@ class NameChange:
     new_text: str
 
 
+@dataclass(frozen=True)
+class ChannelPresetChange:
+    """One channel preset write: the bank word and the program word.
+
+    Carried as a single undo record so that one `z` restores both
+    words together. Only the previous pair is needed for undo.
+    """
+
+    channel: int
+    old_bank: int
+    old_number: int
+
+
 class _ChangesView(list[Any]):
     def __init__(self, log: UndoLog, changes: list[Any]) -> None:
         super().__init__(changes)
@@ -192,7 +206,7 @@ class _ChangesView(list[Any]):
         super().append(change)
 
 
-def _change_label(change: object) -> str:
+def _change_label(change: object) -> str:  # noqa: PLR0911
     if isinstance(change, FavouriteChange):
         return "favourite"
     if isinstance(change, RatingChange):
@@ -204,6 +218,8 @@ def _change_label(change: object) -> str:
         return "parameter"
     if isinstance(change, NameChange):
         return "name"
+    if isinstance(change, ChannelPresetChange):
+        return "channel preset"
     return "change"
 
 
@@ -548,11 +564,17 @@ class EmorphedApp(App[None]):
         }
         # The parallel midimapui agent is adding on_name(text); wire it when
         # available and otherwise stay compatible with the old screen.
-        if (
-            "on_name"
-            in inspect.signature(MidimapEditScreen.__init__).parameters
-        ):
+        sig = inspect.signature(MidimapEditScreen.__init__).parameters
+        if "on_name" in sig:
             ui_kwargs["on_name"] = self._apply_midimap_name
+        if "name_for" in sig:
+            ui_kwargs["name_for"] = lambda bank, number: (
+                self.catalog.display_name(mm.channel_bank(bank), number)
+            )
+        if "on_channel" in sig:
+            ui_kwargs["on_channel"] = self._apply_channel_preset
+        if "on_pick" in sig:
+            ui_kwargs["on_pick"] = self._open_preset_picker
 
         screen = MidimapEditScreen(editor, params, **ui_kwargs)
         self._edit_screen = screen
@@ -563,6 +585,17 @@ class EmorphedApp(App[None]):
             self.notify_status(msg)
         else:
             self.call_later(screen.say, f"stored map (midimap {index})")
+
+    def _open_preset_picker(self, channel: int) -> None:
+        screen = PresetPickerScreen(self.catalog, favorites=self.favorites)
+
+        def done(result: tuple[int, int] | None) -> None:
+            if result is None:
+                return
+            bank, number = result
+            self._apply_channel_preset(channel, bank, number)
+
+        self.push_screen(screen, done)
 
     def _apply_midimap_name(self, text: str) -> None:
         """Write a midimap name through twelve parameter writes."""
@@ -768,6 +801,169 @@ class EmorphedApp(App[None]):
             failure,
             record=record,
         )
+
+    def _apply_channel_preset(  # noqa: C901
+        self, channel: int, bank: int, number: int, *, record: bool = True
+    ) -> bool:
+        bank_offset = mm.channel_bank_offset(channel)
+        program_offset = mm.channel_program_offset(channel)
+        # Gate both offsets before anything else; refuse the whole pair on
+        # the first refusal and send nothing.
+        for offset, value in (
+            (bank_offset, bank),
+            (program_offset, number),
+        ):
+            refusal = self._editor.allow(offset, value)
+            if refusal is not None:
+                self.notify_status(refusal, refused=True)
+                top = getattr(self, "_edit_screen", None)
+                if top is None:
+                    top = self.screen
+                if top is not None and hasattr(top, "say"):
+                    with contextlib.suppress(Exception):
+                        top.say(refusal, refused=True)
+                if top is not None and hasattr(top, "result"):
+                    with contextlib.suppress(Exception):
+                        top.result(
+                            False, refusal, parameter_id=offset, value=value
+                        )
+                return False
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is None:
+                top = self.screen
+            if top is not None and hasattr(top, "result"):
+                with contextlib.suppress(Exception):
+                    top.result(
+                        False, "busy", parameter_id=bank_offset, value=bank
+                    )
+            return False
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is None:
+                top = self.screen
+            if top is not None and hasattr(top, "result"):
+                with contextlib.suppress(Exception):
+                    top.result(
+                        False, "busy", parameter_id=bank_offset, value=bank
+                    )
+            return False
+        self._apply_channel_preset_worker(channel, bank, number, record=record)
+        return True
+
+    @work(thread=True)
+    def _apply_channel_preset_worker(
+        self, channel: int, bank: int, number: int, *, record: bool = True
+    ) -> None:
+        """**MIDI only**: write the bank word, then the program word."""
+        failure: BaseException | None = None
+        old_bank: int | None = None
+        old_number: int | None = None
+        bank_read: int | None = None
+        program_read: int | None = None
+        try:
+            with self._busy_gate:
+                bank_offset = mm.channel_bank_offset(channel)
+                program_offset = mm.channel_program_offset(channel)
+                bank_param = mm.PARAM_BASE + bank_offset
+                program_param = mm.PARAM_BASE + program_offset
+                words = getattr(self, "_current_midimap_words", None)
+                if words is not None and len(words) > program_offset:
+                    old_bank = words[bank_offset]
+                    old_number = words[program_offset]
+                else:
+                    old_bank = self.device.read_parameter(bank_param)
+                    old_number = self.device.read_parameter(program_param)
+                self._backup_before_write()
+                self.device.write_parameter(bank_param, bank)
+                bank_read = self.device.read_parameter(bank_param)
+                self.device.write_parameter(program_param, number)
+                program_read = self.device.read_parameter(program_param)
+        except _BRIDGE_ERRORS as exc:
+            failure = exc
+        finally:
+            self._exchange.release()
+        self.call_from_thread(
+            self._finish_channel_preset_write,
+            channel,
+            bank,
+            number,
+            old_bank,
+            old_number,
+            bank_read,
+            program_read,
+            failure,
+            record,
+        )
+
+    def _finish_channel_preset_write(  # noqa: PLR0913, PLR0917
+        self,
+        channel: int,
+        bank: int,
+        number: int,
+        old_bank: int | None,
+        old_number: int | None,
+        bank_read: int | None,
+        program_read: int | None,
+        failure: BaseException | None,
+        record: bool,
+    ) -> None:
+        bank_offset = mm.channel_bank_offset(channel)
+        program_offset = mm.channel_program_offset(channel)
+        if failure is not None:
+            sentence = f"channel {channel} preset: {failure}"
+            ok = False
+        elif bank_read is None or program_read is None:
+            sentence = (
+                f"channel {channel} preset: the unit stayed silent "
+                "(no read-back)"
+            )
+            ok = False
+        else:
+            agreed = bank_read == bank and program_read == number
+            ok = agreed
+            if agreed:
+                if getattr(self, "_current_midimap_words", None) is not None:
+                    self._current_midimap_words[bank_offset] = bank
+                    self._current_midimap_words[program_offset] = number
+                if record:
+                    self._push_change(
+                        ChannelPresetChange(
+                            channel,
+                            old_bank if old_bank is not None else bank,
+                            old_number if old_number is not None else number,
+                        )
+                    )
+                sentence = (
+                    f"channel {channel} preset written: "
+                    f"bank {bank}, program {number}; read-back agreed"
+                )
+            else:
+                sentence = (
+                    f"channel {channel} preset: read-back disagreed "
+                    f"(bank {bank_read!r} != {bank}, "
+                    f"program {program_read!r} != {number}); "
+                    "did not take"
+                )
+        refused = failure is not None or not ok
+        self.notify_status(sentence, refused=refused)
+        top = getattr(self, "_edit_screen", None)
+        if top is None:
+            top = self.screen
+        if (
+            top is not None
+            and hasattr(top, "update_params")
+            and getattr(self, "_current_midimap_words", None) is not None
+        ):
+            words = self._current_midimap_words
+            params = {off: words[off] for off in range(len(words))}
+            with contextlib.suppress(Exception):
+                top.update_params(params)
+        if top is not None and hasattr(top, "say"):
+            with contextlib.suppress(Exception):
+                top.say(sentence, refused=refused)
 
     def _backup_before_write(self) -> None:
         if self._midimap_backed_up:
@@ -978,7 +1174,8 @@ class EmorphedApp(App[None]):
         newest = self._changes[-n:] if n > 0 else []
         gate_refusal = self._editor.gate.refuse()
         if gate_refusal is not None and any(
-            isinstance(c, (ParamChange, NameChange)) for c in newest
+            isinstance(c, (ParamChange, NameChange, ChannelPresetChange))
+            for c in newest
         ):
             self.notify_status(gate_refusal, refused=True)
             return
@@ -997,6 +1194,7 @@ class EmorphedApp(App[None]):
         tags_notes = 0
         params = 0
         names = 0
+        channel_presets = 0
         not_applied: list[Any] = []
         for record in taken:
             change = record.payload
@@ -1021,6 +1219,16 @@ class EmorphedApp(App[None]):
                     names += 1
                 else:
                     not_applied.append(record)
+            elif isinstance(change, ChannelPresetChange):
+                if self._apply_channel_preset(
+                    change.channel,
+                    change.old_bank,
+                    change.old_number,
+                    record=False,
+                ):
+                    channel_presets += 1
+                else:
+                    not_applied.append(record)
         # Push back what was not applied, oldest-first.
         for record in reversed(not_applied):
             self._undo_log.push(record)
@@ -1041,6 +1249,11 @@ class EmorphedApp(App[None]):
             parts.append(f"{params} parameter{'s' if params != 1 else ''}")
         if names:
             parts.append(f"{names} name{'s' if names != 1 else ''}")
+        if channel_presets:
+            parts.append(
+                f"{channel_presets} channel "
+                f"preset{'s' if channel_presets != 1 else ''}"
+            )
         if parts:
             msg = "undid " + ", ".join(parts)
             if not_applied:
