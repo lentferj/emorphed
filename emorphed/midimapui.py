@@ -1123,9 +1123,19 @@ class MidimapEditScreen(ModalScreen[None]):
         self._update_status()
 
     def update_params(self, params: dict[int, int]) -> None:
+        """Replace every value -- a scratch re-read, a rename, a pair write.
+
+        The cursor follows the row it was on, in its column: this lands
+        asynchronously *after* a write, and jumping the user to the top-left
+        cell on every ``+``/``-`` would silently lose their place.
+        """
+        row = self._current_row()
+        column = self._cursor_column()
         self._values = dict(params)
         self._build_rows()
         self._filter = ""
         self._ordered = self._visible_rows()
         self._refresh_table()
+        if row is not None:
+            self._move_to(row, column)
         self._update_status()

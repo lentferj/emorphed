@@ -1577,6 +1577,8 @@ class TestChannelPreset:
             await _settle(app, pilot)
             await pilot.pause()
             assert len(device.parameter_writes) - before == 2
+            # the async write must not throw the cursor to the top-left cell
+            assert screen._current_row() == "ch1"
 
 
 class TestRefusalsAreVisible:

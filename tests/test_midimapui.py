@@ -1169,6 +1169,24 @@ async def test_collapsed_summary_updates_after_edit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_params_keeps_the_cursor() -> None:
+    """A write landing asynchronously must not reset the view to (0, 0)."""
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        table.move_cursor(row=screen._ordered.index("ch5"), column=2)
+        await pilot.pause()
+        screen.update_params(dict(screen._values))
+        await pilot.pause()
+        assert screen._current_row() == "ch5"
+        assert table.cursor_column == 2  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
 async def test_cursor_starts_on_the_first_column() -> None:
     """Entering the editor must not drop the cursor in the value column."""
     app = MiniApp()
