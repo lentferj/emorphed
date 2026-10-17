@@ -1484,6 +1484,101 @@ class TestGroupPUndoAndReadback:
             assert any("stayed silent" in m for m, _ in said), said
 
 
+class TestChannelPreset:
+    """A channel's preset is the bank word and the program word together."""
+
+    async def test_a_pair_write_lands_bank_then_program(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            before = len(device.parameter_writes)
+            assert app._apply_channel_preset(1, 2, 5) is True
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert device.parameter_writes[before:] == [
+                (mm.PARAM_BASE + mm.channel_bank_offset(1), 2),
+                (mm.PARAM_BASE + mm.channel_program_offset(1), 5),
+            ]
+            assert len(app._changes) == 1
+
+    async def test_a_locked_gate_refuses_the_pair(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            before = len(device.parameter_writes)
+            said = _capture(app)
+            assert app._apply_channel_preset(1, 2, 5) is False
+            await pilot.pause()
+            assert len(device.parameter_writes) == before
+            assert any(refused for _, refused in said), said
+
+    async def test_a_disagreed_pair_is_not_logged(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        app._gate.toggle()  # arm
+        program_param = mm.PARAM_BASE + mm.channel_program_offset(1)
+        original = device.read_parameter
+
+        def fake(param: int) -> int | None:
+            if param == program_param:
+                return 99  # the program read-back disagrees
+            return original(param)
+
+        monkeypatch.setattr(device, "read_parameter", fake)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            said = _capture(app)
+            assert app._apply_channel_preset(1, 2, 5) is True
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert app._changes == []
+            assert any("disagreed" in m for m, _ in said), said
+
+    async def test_one_undo_restores_both_words(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._apply_channel_preset(1, 2, 5)
+            await _settle(app, pilot)
+            await pilot.pause()
+            before = len(device.parameter_writes)
+            app.action_undo()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert device.parameter_writes[before:] == [
+                (mm.PARAM_BASE + mm.channel_bank_offset(1), 0),
+                (mm.PARAM_BASE + mm.channel_program_offset(1), 0),
+            ]
+            assert app._changes == []
+
+    async def test_plus_on_a_channel_summary_writes_the_pair(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            table = screen.query_one("#midimap-table", DataTable)
+            table.move_cursor(row=screen._ordered.index("ch1"), column=0)
+            await pilot.pause()
+            before = len(device.parameter_writes)
+            screen.action_nudge_up()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) - before == 2
+
+
 class TestTheFooterFitsItsText:
     """The footer is a wrapped legend, not a fixed band.
 
