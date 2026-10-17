@@ -54,7 +54,7 @@ class MidimapEditScreen(ModalScreen[None]):
     DEFAULT_CSS = """
     MidimapEditScreen { align: center middle; }
     MidimapEditScreen > Vertical {
-        width: 92; height: 86%; border: thick $accent;
+        width: 92%; height: 86%; border: thick $accent;
         background: $surface; padding: 1 2;
     }
     MidimapEditScreen DataTable { height: 1fr; }
@@ -357,7 +357,7 @@ class MidimapEditScreen(ModalScreen[None]):
                 key=key,
             )
         if table.row_count:
-            table.move_cursor(row=0, column=3)
+            table.move_cursor(row=0, column=0)
 
     def _current_row(self) -> Any | None:
         if not self._ordered:
@@ -566,7 +566,7 @@ class MidimapEditScreen(ModalScreen[None]):
                     if new_idx is not None:
                         try:
                             table = self.query_one("#midimap-table", DataTable)
-                            table.move_cursor(row=new_idx, column=3)
+                            table.move_cursor(row=new_idx, column=0)
                         except Exception:  # noqa: S110
                             pass
             if off is not None:
@@ -663,7 +663,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if new_idx is not None:
             try:
                 table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=new_idx, column=3)
+                table.move_cursor(row=new_idx, column=0)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -687,7 +687,7 @@ class MidimapEditScreen(ModalScreen[None]):
             if new_idx is not None:
                 try:
                     table = self.query_one("#midimap-table", DataTable)
-                    table.move_cursor(row=new_idx, column=3)
+                    table.move_cursor(row=new_idx, column=0)
                 except Exception:  # noqa: S110
                     pass
             self._update_status()
@@ -745,7 +745,7 @@ class MidimapEditScreen(ModalScreen[None]):
                 if new_idx is not None:
                     try:
                         table = self.query_one("#midimap-table", DataTable)
-                        table.move_cursor(row=new_idx, column=3)
+                        table.move_cursor(row=new_idx, column=0)
                     except Exception:  # noqa: S110
                         pass
                 self._update_status()
@@ -783,7 +783,7 @@ class MidimapEditScreen(ModalScreen[None]):
                 if new_idx is not None:
                     try:
                         table = self.query_one("#midimap-table", DataTable)
-                        table.move_cursor(row=new_idx, column=3)
+                        table.move_cursor(row=new_idx, column=0)
                     except Exception:  # noqa: S110
                         pass
                 self._update_status()
@@ -820,7 +820,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if idx is not None:
             try:
                 table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=idx, column=3)
+                table.move_cursor(row=idx, column=0)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -836,7 +836,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if target is not None:
             try:
                 table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=target, column=3)
+                table.move_cursor(row=target, column=0)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -853,7 +853,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if new_idx is not None:
             try:
                 table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=new_idx, column=3)
+                table.move_cursor(row=new_idx, column=0)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -893,7 +893,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if next_bound is not None:
             try:
                 t = self.query_one("#midimap-table", DataTable)
-                t.move_cursor(row=next_bound, column=3)
+                t.move_cursor(row=next_bound, column=0)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -932,7 +932,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if prev_bound is not None:
             try:
                 t = self.query_one("#midimap-table", DataTable)
-                t.move_cursor(row=prev_bound, column=3)
+                t.move_cursor(row=prev_bound, column=0)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -1021,7 +1021,7 @@ class MidimapEditScreen(ModalScreen[None]):
             if new_idx is not None:
                 try:
                     table = self.query_one("#midimap-table", DataTable)
-                    table.move_cursor(row=new_idx, column=3)
+                    table.move_cursor(row=new_idx, column=0)
                 except Exception:  # noqa: S110
                     pass
             self._update_status()

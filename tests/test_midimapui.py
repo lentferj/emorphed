@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.widgets import DataTable, Static
 
 from emorphed.edit import EditGate, MidimapEditor
@@ -861,6 +862,35 @@ async def test_collapsed_summary_updates_after_edit() -> None:
         table = screen.query_one("#midimap-table", DataTable)
         row = table.get_row_at(table.get_row_index("ch1"))
         assert "vol 9" in row[3] or "9" in row[3]
+
+
+@pytest.mark.asyncio
+async def test_cursor_starts_on_the_first_column() -> None:
+    """Entering the editor must not drop the cursor in the value column."""
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        assert table.cursor_column == 0
+
+
+@pytest.mark.asyncio
+async def test_the_modal_scales_with_the_terminal_width() -> None:
+    """The modal is a percentage wide, not a fixed cell count."""
+    widths: dict[int, int] = {}
+    for terminal_width in (80, 140):
+        app = MiniApp()
+        async with app.run_test(size=(terminal_width, 30)) as pilot:
+            editor = MidimapEditor(gate=EditGate(armed=True))
+            screen = MidimapEditScreen(editor, _full_params())
+            app.push_screen(screen)
+            await pilot.pause()
+            widths[terminal_width] = screen.query_one(Vertical).size.width
+    assert widths[80] < 80  # noqa: PLR2004
+    assert widths[140] > 120  # noqa: PLR2004
 
 
 if __name__ == "__main__":
