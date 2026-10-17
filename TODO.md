@@ -78,7 +78,7 @@ with the remembered device ID; fixed in `801afbf`.
 ## 1. The bridge has never talked to the instrument
 
 **Status:** the identity, name and read probes are answered; the bank
-framing is the open question.
+framing is the open question (bench-ready: U4 capture, run by a human).
 
 `emu/bridge.py` is complete and unexercised. In order:
 
@@ -150,6 +150,16 @@ round-trip **answered**, `names()` for all three kinds **answered** (the
 2026-10-16 deep dive in `docs/RESOLUTION_NOTES.md`), and `read_preset`
 checksum recomputation **matched** (566-byte frame, 0x3c).
 
+**Bench-ready step (U4, bank capture).** `tests/test_hardware.py::
+test_preset_bank_request_records_checksum_status_per_frame` now writes one
+full frame per distinct length as a `.syx` into the directory named by
+`EMORPHED_BANK_CAPTURE` (default `/tmp/opencode`) and prints every
+written path with its frame length. The test asserts nothing about the
+674-byte framing; it only records the observation. Run `make
+test-hardware` with `EMORPHED_BANK_CAPTURE` set and hand the captured
+frames in for analysis — the raw bytes are the missing input for the
+bank-framing question above. **Bench-ready; run by a human.**
+
 ## 2. Two things in the manual disagree about the card
 
 **Status:** resolved in favour of the data; worth confirming.
@@ -168,7 +178,8 @@ No code change is pending on this answer.
 
 ## 3. `PRESET_GAP` is a guess
 
-**Status:** open — first measurement taken 2026-10-15 (one observation).
+**Status:** open — first measurement taken 2026-10-15 (one observation);
+bench-ready sweep (U5), run by a human.
 
 The manual warns that sending presets to the unit needs roughly 100 ms
 between them or the input buffer clogs, and offers a SysEx Packet Delay
@@ -184,6 +195,17 @@ pushed, but the read direction is no longer unmeasured. That unit reads a
 preset in about **0.2 s** (a single 566-byte frame; the 2026-10-16 deep
 dive saw the first reply at 0.198 s), so the 100.1 ms spacing sat inside a
 fast, complete read — the observation stands.
+
+**Bench-ready step (U5, gap sweep).** `TestHardwareTiming::
+test_gap_sweep_reports_the_largest_answered_gap` (opt-in like the rest)
+reads preset 0, then for gaps `(0.0, 0.025, 0.05, 0.075, 0.1, 0.15,
+0.25)` s sends two spaced preset requests and records whether both were
+answered, stopping at the first unanswered gap; it prints the largest
+answered gap and the first that was not. Read-only: no writes, no
+selection, no Program Change. It does not change `bridge.PRESET_GAP`;
+the number stays labelled a guess in the code until a human records the
+sweep. Run `make test-hardware` and record the observation. **Bench-ready;
+run by a human.**
 
 ## 4. Hyperpresets and midimaps are read but not browsed
 
@@ -315,15 +337,32 @@ edit buffer per kind which is erased by changing which object is current
   restore the backup, then store -- the store step is what is still unrun. It
   refuses without `--yes` and a TTY, and no agent runs it.
 
-## 7. The MidiQuest `.sqs` format is unread — shared across the projects
+**Bench-ready step (U6, store).** `tools/bench_midimap_write.py --store`
+now reads the stored map back (`bridge.read_midimap(location)`) after
+`bridge.send_midimap(location, words)` and compares it word-for-word; the
+store result is folded into the exit verdict, so a store that did not read
+back agreeing is a failure. The fence is unchanged: `--store` still needs a
+TTY and `--yes`, the location is still retyped, and the tool still refuses
+`--demo`. Run `tools/bench_midimap_write.py --store <location> --yes`
+human-attended (TTY required) and record the observation. **Bench-ready;
+run by a human.**
 
-**Status:** open, and not specific to this instrument.
+## 7. The MidiQuest `.sqs` container is documented; the body is not
 
-The same chunked MidiQuest bank format turns up in every instrument's
-folder in this collection. Decoding it once would serve rxved, kwsed,
-p2ked, x5ded, nanosyned, ensqsqed and this one alike.
+**Status:** open — container documented in `docs/SQS_NOTES.md`; the
+compressed/obfuscated `BODY` payload remains undecoded. Not specific to
+this instrument.
 
-**Blocked on:** nothing but the decoding.
+The chunked MidiQuest bank format turns up in every instrument's folder in
+this collection. Its container is now documented (`docs/SQS_NOTES.md`):
+big-endian IFF-style `LIST`/`FORM` typed `BANK`, chunk vocabulary and
+order, and the observation that the `SHDR`/`BODY` payloads are
+high-entropy (compressed and/or obfuscated, not raw SysEx). Decoding the
+`BODY` is a separate research task; **no decoder ships**.
+
+**Blocked on:** decoding the `BODY` payload (see `docs/SQS_NOTES.md`).
+A single decode would serve rxved, kwsed, p2ked, x5ded, nanosyned,
+ensqsqed and this one alike.
 
 ---
 
@@ -547,6 +586,11 @@ That is the bench's question, not the review's.
   a time on user action, so it never had to measure the gap. TODO item 3
   remains open and unmeasured from both directions.
 
+**Recorded as notes only.** None of the above is implemented: command
+`0x22` is **not** added to `Command.NAMES`, no Effect List parser is
+added, and no UltraProteus handling is added. They stay here as
+observations until the manual or a bench run confirms them.
+
 ## 8. `tools/extract_catalog.py` does not exist
 
 **Status:** closed in T10 (`5af2160`).
@@ -568,31 +612,31 @@ local file presence required.
 
 ## ER-F1 — the bool sweep stopped at `device_id`; `load_channel` has the same bug (external review follow-up — GLM-5.3-Flash, 2026-09-20)
 
-**Status:** open, verified live in six projects.
+**Status:** resolved for emorphed (2026-10-17). The guard now lives in the
+shared library; the sibling-repo sweep is out of this repository's scope.
 
 The ER-3 fix added the correct bool guard to `load_device_id` — verified
 live: a hand-edited `device_id = true` now comes back as `None` in both
 this project and ensqsqed, with the comment naming why
 (`isinstance(True, int)` is True).
 
-**`load_channel`, one function away in the same file, was not swept.** It
-still reads `isinstance(value, int) and 0 <= value <= 15`, which passes for
-`True`: `channel = true` in TOML returns `True`, every downstream range
-check passes (`0 <= True <= 15` is true), and the wire effect is real —
-`select_messages(slot, True)` emits status `0xC1`, which is **MIDI channel
-2**, not channel 1. Verified live against this checkout, and the same
-unfixed form is in `ensqsqed/sq/config.py`, `kwsed/kws/config.py:129`,
-`p2ked/p2k/config.py:130`, `x5ded/x5/config.py:129` and
-`nanosyned/nano/config.py:130`. rxved carries its channel logic in its
-bridge with its own panel-number range and needs the same check in its own
-terms.
+**Resolution for emorphed:** `emu/config.py` is now a thin binding of
+`vinsynlib.config.Settings` (`_settings = Settings(...)`) and every
+numeric loader is delegated to it. The bool guard for `load_channel` lives
+in `vinsynlib/config.py:438` (`isinstance(value, bool) or not
+isinstance(value, int)`); `load_last_recv_port` is string-typed (`:464`)
+and cannot admit a bool. `tests/test_store.py::TestABoolIsNotANumber`
+(`:229-278`) walks every numeric loader and passes. The bug described
+here no longer exists in this checkout.
 
-The failure mode is the one the new `load_device_id` comment itself
-describes — a hand-edited value taking a plausible wrong form — one
-function from where it was just fixed. The sweep that propagated the
-device-ID guard to six projects should run for the channel loader too;
-`load_last_recv_port`'s `and value` truthiness check is of the same shape
-and worth a glance while there.
+The sibling-repo sweep (ensqsqed, kwsed, p2ked, x5ded, nanosyned, rxved)
+is **out of this repository's scope** (CLAUDE.md: do not edit siblings);
+it is left for those projects' own ledgers. `load_last_recv_port`'s
+`and value` truthiness check is of the same shape and was glanced at: it
+is string-typed in the library and cannot admit a bool, so no change is
+needed here.
+
+See `docs/RESOLUTION_NOTES.md` §24 for the entry.
 
 ## 9. The card's bank number when *selecting* is 3, not 2
 

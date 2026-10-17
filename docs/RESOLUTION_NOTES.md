@@ -620,9 +620,10 @@ are checkable without reading edisyn again.
   preset; nothing in emorphed sends it. Presets are read, selected and
   backed up only.
 * **No CLI write path and no `restore`.** `morphcli` still only reads.
-* The **store is unverified on hardware**, and the human-attended write
-  bench that would prove the parameter-write path on a unit
-  (`tools/bench_midimap_write.py`) has not been run.
+* The **store is unverified on hardware**. The parameter-write half was
+  proven on 2026-10-16 by `tools/bench_midimap_write.py` (above); the
+  store half — sending a whole `0x47` dump to a location — is the unrun
+  half and remains unverified.
 
 **Scratch versus stored -- the distinction the fence rests on.** A
 parameter write edits the unit's **scratch** midimap: the value it is using
@@ -690,3 +691,20 @@ editor treats the index as **assumed** (0) and says so -- "midimap 0
 guess as the live map. The same wave writes the **name** through twelve
 parameter writes with a read-back each, as one `NameChange` record so a
 single `z` restores the whole previous name.
+
+## 24. ER-F1 — the bool sweep stopped at `device_id`; resolved for emorphed (2026-10-17)
+
+**Source: this ledger entry, not a document.** The guard now lives in the
+shared library, and this repository no longer carries the bug.
+
+`emu/config.py` is a thin binding of `vinsynlib.config.Settings`
+(`_settings = Settings(...)`); every numeric loader is delegated to it.
+`vinsynlib/config.py:438` (`load_channel`) reads
+`isinstance(value, bool) or not isinstance(value, int)`, so a hand-edited
+`channel = true` comes back as `None` rather than `True`. `load_last_recv_port`
+is string-typed (`:464`) and cannot admit a bool. `tests/test_store.py::
+TestABoolIsNotANumber` (`:229-278`) walks every numeric loader and passes.
+
+The sibling-repo sweep (ensqsqed, kwsed, p2ked, x5ded, nanosyned, rxved)
+is out of this repository's scope (CLAUDE.md: do not edit siblings) and is
+left to those projects' own ledgers.
