@@ -878,6 +878,27 @@ async def test_cursor_starts_on_the_first_column() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nudge_keeps_the_cursor_column() -> None:
+    """+/- edits the row; it must not throw the cell cursor to column 0."""
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        table.move_cursor(row=screen._ordered.index("ch1"), column=0)
+        screen.action_edit_current()
+        await pilot.pause()
+        table.move_cursor(row=screen._ordered.index(12), column=3)
+        await pilot.pause()
+        screen.action_nudge_up()
+        await pilot.pause()
+        assert table.cursor_column == 3  # noqa: PLR2004
+        assert table.cursor_row == screen._ordered.index(12)
+
+
+@pytest.mark.asyncio
 async def test_the_modal_scales_with_the_terminal_width() -> None:
     """The modal is a percentage wide, not a fixed cell count."""
     widths: dict[int, int] = {}

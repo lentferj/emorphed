@@ -392,6 +392,24 @@ class MidimapEditScreen(ModalScreen[None]):
         except ValueError:
             return None
 
+    def _cursor_column(self) -> int:
+        """The table's current column, or the first when it is not up yet."""
+        try:
+            return self.query_one("#midimap-table", DataTable).cursor_column
+        except Exception:
+            return 0
+
+    def _move_to(self, row: Any, column: int) -> None:
+        """Put the cell cursor back on ``row`` in ``column``; no-op if gone."""
+        index = self._index_of_row(row)
+        if index is None:
+            return
+        try:
+            table = self.query_one("#midimap-table", DataTable)
+        except Exception:
+            return
+        table.move_cursor(row=index, column=column)
+
     def _spell(self, offset: int, value: int) -> str:
         try:
             return mm.spell(mm.param_at(offset), value)
@@ -556,19 +574,11 @@ class MidimapEditScreen(ModalScreen[None]):
                 # set); restore the cursor to the row that was current.
                 if "name" in self._all_rows and self._filter:
                     current = self._current_row()
+                    column = self._cursor_column()
                     self._build_rows()
                     self._refresh_table()
-                    new_idx = (
-                        self._index_of_row(current)
-                        if current is not None
-                        else None
-                    )
-                    if new_idx is not None:
-                        try:
-                            table = self.query_one("#midimap-table", DataTable)
-                            table.move_cursor(row=new_idx, column=0)
-                        except Exception:  # noqa: S110
-                            pass
+                    if current is not None:
+                        self._move_to(current, column)
             if off is not None:
                 self._pre_edit.pop(off, None)
         elif off is not None and off in self._pre_edit:
@@ -599,7 +609,7 @@ class MidimapEditScreen(ModalScreen[None]):
     def action_nudge_down(self) -> None:
         self._nudge(-1)
 
-    def _nudge(self, by: int) -> None:  # noqa: C901, PLR0912, PLR0915
+    def _nudge(self, by: int) -> None:  # noqa: C901, PLR0912
         row = self._current_row()
         if row is None:
             return
@@ -657,15 +667,10 @@ class MidimapEditScreen(ModalScreen[None]):
         self._values[off] = value
         if on_edit is not None:
             on_edit(off, value)
+        column = self._cursor_column()
         self._refresh_table()
-        # keep cursor on same row
-        new_idx = self._index_of_row(row)
-        if new_idx is not None:
-            try:
-                table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=new_idx, column=0)
-            except Exception:  # noqa: S110
-                pass
+        # keep the cursor on the same row, in the column it was on
+        self._move_to(row, column)
         self._update_status()
 
     def action_edit_current(self) -> None:  # noqa: C901, PLR0915
@@ -682,14 +687,9 @@ class MidimapEditScreen(ModalScreen[None]):
             else:
                 self._expanded.add(channel)
             self._build_rows()
+            column = self._cursor_column()
             self._refresh_table()
-            new_idx = self._index_of_row(row)
-            if new_idx is not None:
-                try:
-                    table = self.query_one("#midimap-table", DataTable)
-                    table.move_cursor(row=new_idx, column=0)
-                except Exception:  # noqa: S110
-                    pass
+            self._move_to(row, column)
             self._update_status()
             return
         if row == "name":
@@ -740,14 +740,9 @@ class MidimapEditScreen(ModalScreen[None]):
                 self._values[off] = value
                 if self._on_edit is not None:
                     self._on_edit(off, value)
+                column = self._cursor_column()
                 self._refresh_table()
-                new_idx = self._index_of_row(row)
-                if new_idx is not None:
-                    try:
-                        table = self.query_one("#midimap-table", DataTable)
-                        table.move_cursor(row=new_idx, column=0)
-                    except Exception:  # noqa: S110
-                        pass
+                self._move_to(row, column)
                 self._update_status()
 
             self.app.push_screen(
@@ -778,14 +773,9 @@ class MidimapEditScreen(ModalScreen[None]):
                 self._values[off] = value
                 if self._on_edit is not None:
                     self._on_edit(off, value)
+                column = self._cursor_column()
                 self._refresh_table()
-                new_idx = self._index_of_row(row)
-                if new_idx is not None:
-                    try:
-                        table = self.query_one("#midimap-table", DataTable)
-                        table.move_cursor(row=new_idx, column=0)
-                    except Exception:  # noqa: S110
-                        pass
+                self._move_to(row, column)
                 self._update_status()
 
             self.app.push_screen(
@@ -814,48 +804,37 @@ class MidimapEditScreen(ModalScreen[None]):
             self._on_undo(None)
 
     def action_go_name(self) -> None:
+        column = self._cursor_column()
         self._filter = ""
         self._refresh_table()
-        idx = self._index_of_row("name")
-        if idx is not None:
-            try:
-                table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=idx, column=0)
-            except Exception:  # noqa: S110
-                pass
+        self._move_to("name", column)
         self._update_status()
 
     def action_go_effects(self) -> None:
+        column = self._cursor_column()
         self._filter = ""
         self._refresh_table()
-        target = None
-        for i, r in enumerate(self._ordered):
-            if self._section_of(r) == "Global / Effects":
-                target = i
+        for target, row in enumerate(self._ordered):
+            if self._section_of(row) == "Global / Effects":
+                try:
+                    table = self.query_one("#midimap-table", DataTable)
+                    table.move_cursor(row=target, column=column)
+                except Exception:  # noqa: S110
+                    pass
                 break
-        if target is not None:
-            try:
-                table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=target, column=0)
-            except Exception:  # noqa: S110
-                pass
         self._update_status()
 
     def action_toggle_all_channels(self) -> None:
         row = self._current_row()
+        column = self._cursor_column()
         if self._expanded:
             self._expanded.clear()
         else:
             self._expanded = set(range(1, 17))
         self._build_rows()
         self._refresh_table()
-        new_idx = self._index_of_row(row) if row is not None else None
-        if new_idx is not None:
-            try:
-                table = self.query_one("#midimap-table", DataTable)
-                table.move_cursor(row=new_idx, column=0)
-            except Exception:  # noqa: S110
-                pass
+        if row is not None:
+            self._move_to(row, column)
         self._update_status()
 
     def action_next_section(self) -> None:  # noqa: C901, PLR0912
@@ -868,6 +847,7 @@ class MidimapEditScreen(ModalScreen[None]):
         cur = table.cursor_row if table is not None else 0
         if not (0 <= cur < len(self._ordered)):
             cur = 0
+        column = table.cursor_column if table is not None else 0
         # find section boundaries
         bounds: list[int] = [0]
         for i in range(1, len(self._ordered)):
@@ -893,7 +873,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if next_bound is not None:
             try:
                 t = self.query_one("#midimap-table", DataTable)
-                t.move_cursor(row=next_bound, column=0)
+                t.move_cursor(row=next_bound, column=column)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -908,6 +888,7 @@ class MidimapEditScreen(ModalScreen[None]):
         cur = table.cursor_row if table is not None else 0
         if not (0 <= cur < len(self._ordered)):
             cur = 0
+        column = table.cursor_column if table is not None else 0
         bounds: list[int] = [0]
         for i in range(1, len(self._ordered)):
             if self._section_of(self._ordered[i]) != self._section_of(
@@ -932,7 +913,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if prev_bound is not None:
             try:
                 t = self.query_one("#midimap-table", DataTable)
-                t.move_cursor(row=prev_bound, column=0)
+                t.move_cursor(row=prev_bound, column=column)
             except Exception:  # noqa: S110
                 pass
         self._update_status()
@@ -1016,14 +997,9 @@ class MidimapEditScreen(ModalScreen[None]):
                 self._on_edit(int(off), value)
             self._typing = ""
             self._typing_offset = None
+            column = self._cursor_column()
             self._refresh_table()
-            new_idx = self._index_of_row(row)
-            if new_idx is not None:
-                try:
-                    table = self.query_one("#midimap-table", DataTable)
-                    table.move_cursor(row=new_idx, column=0)
-                except Exception:  # noqa: S110
-                    pass
+            self._move_to(row, column)
             self._update_status()
             event.prevent_default()
             return
