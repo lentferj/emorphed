@@ -585,7 +585,7 @@ class EmorphedApp(App[None]):
             return
         self._write_midimap_name_worker(text)
 
-    def _apply_name_text(self, text: str) -> None:
+    def _apply_name_text(self, text: str) -> bool:
         """Restore a name (undo path): writes without a new undo record."""
         padded = (text[:12] if len(text) > 12 else text).ljust(12)
         for off, char in enumerate(padded):
@@ -598,14 +598,15 @@ class EmorphedApp(App[None]):
                 if top is not None and hasattr(top, "say"):
                     with contextlib.suppress(Exception):
                         top.say(refusal, refused=True)
-                return
+                return False
         if self._busy:
             self.notify_status("busy", refused=True)
-            return
+            return False
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
-            return
+            return False
         self._write_midimap_name_worker(text, record=False)
+        return True
 
     @work(thread=True)
     def _write_midimap_name_worker(
@@ -694,9 +695,9 @@ class EmorphedApp(App[None]):
                 top.say(msg)
         self.notify_status(msg)
 
-    def _apply_parameter(
+    def _apply_parameter(  # noqa: C901
         self, offset: int, value: int, *, record: bool = True
-    ) -> None:
+    ) -> bool:
         refusal = self._editor.allow(offset, value)
         if refusal is not None:
             self.notify_status(refusal, refused=True)
@@ -706,14 +707,34 @@ class EmorphedApp(App[None]):
                     top.say(refusal, refused=True)
                 except Exception:  # noqa: S110
                     pass
-            return
+            if hasattr(top, "result"):
+                try:
+                    top.result(
+                        False, refusal, parameter_id=offset, value=value
+                    )
+                except Exception:  # noqa: S110
+                    pass
+            return False
         if self._busy:
             self.notify_status("busy", refused=True)
-            return
+            top = self.screen
+            if hasattr(top, "result"):
+                try:
+                    top.result(False, "busy", parameter_id=offset, value=value)
+                except Exception:  # noqa: S110
+                    pass
+            return False
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
-            return
+            top = self.screen
+            if hasattr(top, "result"):
+                try:
+                    top.result(False, "busy", parameter_id=offset, value=value)
+                except Exception:  # noqa: S110
+                    pass
+            return False
         self._apply_parameter_worker(offset, value, record)
+        return True
 
     @work(thread=True)
     def _apply_parameter_worker(
@@ -787,8 +808,13 @@ class EmorphedApp(App[None]):
         if failure is not None:
             sentence = f"offset {offset}: {failure}"
             ok = False
+        elif read_back is None:
+            sentence = (
+                f"offset {offset}: the unit stayed silent (no read-back)"
+            )
+            ok = False
         else:
-            rb = read_back if read_back is not None else 0
+            rb = read_back
             old_val = old if old is not None else value
             ok, sentence = self._editor.finish(offset, value, rb, old=old_val)
             if ok and record:
@@ -937,7 +963,21 @@ class EmorphedApp(App[None]):
     def action_undo_all(self) -> None:
         self._undo_master_edits(None)
 
-    def _undo_master_edits(self, count: int | None = None) -> None:  # noqa: C901, PLR0912
+    def _undo_master_edits(self, count: int | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
+        # P2: refuse before consuming when the write gate is locked and the
+        # batch contains a ParamChange or NameChange.
+        n = (
+            len(self._changes)
+            if count is None
+            else min(count, len(self._changes))
+        )
+        newest = self._changes[-n:] if n > 0 else []
+        gate_refusal = self._editor.gate.refuse()
+        if gate_refusal is not None and any(
+            isinstance(c, (ParamChange, NameChange)) for c in newest
+        ):
+            self.notify_status(gate_refusal, refused=True)
+            return
         taken = self._undo_log.plan(
             len(self._changes) if count is None else count
         )
@@ -948,13 +988,14 @@ class EmorphedApp(App[None]):
             elif not self._changes:
                 self.notify_status("nothing to undo")
             return
-        changes = [record.payload for record in taken]
         favourites = 0
         ratings = 0
         tags_notes = 0
         params = 0
         names = 0
-        for change in changes:
+        not_applied: list[Any] = []
+        for record in taken:
+            change = record.payload
             if isinstance(change, FavouriteChange):
                 favourites += 1
                 self._undo_favourite(change)
@@ -965,11 +1006,20 @@ class EmorphedApp(App[None]):
                 tags_notes += 1
                 self._undo_tag_note(change)
             elif isinstance(change, ParamChange):
-                params += 1
-                self._apply_parameter(change.offset, change.old, record=False)
+                if self._apply_parameter(
+                    change.offset, change.old, record=False
+                ):
+                    params += 1
+                else:
+                    not_applied.append(record)
             elif isinstance(change, NameChange):
-                names += 1
-                self._apply_name_text(change.old_text)
+                if self._apply_name_text(change.old_text):
+                    names += 1
+                else:
+                    not_applied.append(record)
+        # Push back what was not applied, oldest-first.
+        for record in reversed(not_applied):
+            self._undo_log.push(record)
         if self.favorites is not None:
             self._refill_keeping_place()
         parts = []
@@ -987,7 +1037,17 @@ class EmorphedApp(App[None]):
             parts.append(f"{params} parameter{'s' if params != 1 else ''}")
         if names:
             parts.append(f"{names} name{'s' if names != 1 else ''}")
-        msg = "undid " + ", ".join(parts) if parts else "undid"
+        if parts:
+            msg = "undid " + ", ".join(parts)
+            if not_applied:
+                msg += (
+                    f"; {len(not_applied)} could not be applied "
+                    "-- press z again"
+                )
+        elif not_applied:
+            msg = f"{len(not_applied)} could not be applied -- press z again"
+        else:
+            msg = "undid"
         self.notify_status(msg)
 
     def _undo_favourite(self, change: FavouriteChange) -> None:

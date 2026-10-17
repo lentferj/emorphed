@@ -1362,3 +1362,105 @@ class TestTheBrowserRemembersWhereItWas:
             store.close()
         assert config.load_ui_int("rating_stars", path) == 2
         assert config.load_ui_bool("rating_at_least", path) is True
+
+
+class TestGroupPUndoAndReadback:
+    async def test_undo_two_nudges_one_lands_one_pushed_back(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            screen.query_one("#midimap-table", DataTable).move_cursor(
+                row=1, column=2
+            )
+            await pilot.pause()
+            screen.action_nudge_up()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen.query_one("#midimap-table", DataTable).move_cursor(
+                row=2, column=2
+            )
+            await pilot.pause()
+            screen.action_nudge_up()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(app._changes) == 2
+
+            said = _capture(app)
+            writes_before = len(device.parameter_writes)
+            app.action_undo_all()
+            await pilot.pause()
+            assert len(app._changes) == 1
+            assert any("could not be applied" in m for m, _ in said), said
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) == writes_before + 1
+
+            # a later undo applies the remaining one
+            said2 = _capture(app)
+            writes_before2 = len(device.parameter_writes)
+            app.action_undo()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) == writes_before2 + 1
+            assert app._changes == []
+            assert not any("could not be applied" in m for m, _ in said2), (
+                said2
+            )
+
+    async def test_undo_under_locked_gate_survives(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            screen.query_one("#midimap-table", DataTable).move_cursor(
+                row=1, column=2
+            )
+            await pilot.pause()
+            screen.action_nudge_up()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(app._changes) == 1
+            app._gate.toggle()  # lock
+            said = _capture(app)
+            writes_before = len(device.parameter_writes)
+            app.action_undo()
+            await pilot.pause()
+            assert len(device.parameter_writes) == writes_before
+            assert any("write gate is locked" in m for m, _ in said), said
+            assert len(app._changes) == 1
+
+    async def test_silent_readback_not_logged(
+        self,
+        app: "EmorphedApp",
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        app._gate.toggle()  # arm
+        monkeypatch.setattr(device, "read_parameter", lambda _p: None)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            screen.query_one("#midimap-table", DataTable).move_cursor(
+                row=1, column=2
+            )
+            await pilot.pause()
+            said = _capture(app)
+            screen.action_nudge_up()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert app._changes == []
+            assert any("stayed silent" in m for m, _ in said), said
