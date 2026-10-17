@@ -27,6 +27,8 @@ It requires ``--yes`` and refuses to run without a TTY, because it changes
 what the unit is doing and cannot be undone remotely. It never stores a
 midimap unless ``--store LOCATION`` is given explicitly (and then only after
 a backup in this run, and after the location is confirmed a second time).
+When it does store, it reads the stored map back and compares it with what
+was sent; a store that does not read back agreeing fails the run.
 """
 
 from __future__ import annotations
@@ -596,6 +598,31 @@ def _provenance_line(index: int, words: list[int], device_id: int) -> str:
     return f"midimap {index} ({region}) name={name!r} device={device_id}"
 
 
+def count_agreeing_words(sent: Sequence[int], stored: Sequence[int]) -> int:
+    """How many words agree, position by position. Pure."""
+    return sum(1 for a, b in zip(sent, stored, strict=False) if a == b)
+
+
+def exit_code(
+    agreed_write: bool,
+    agreed_restore: bool,
+    *,
+    store_attempted: bool = False,
+    store_agreed: bool | None = None,
+) -> int:
+    """The bench's verdict: 0 when every attempted step read back agreed.
+
+    The parameter write and its restore must both agree. A store that was
+    attempted must also read back agreeing -- it is the destructive step, so
+    a disagreement there fails the run even when the write passed (TODO 6).
+    """
+    if not (agreed_write and agreed_restore):
+        return 1
+    if store_attempted and store_agreed is not True:
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
     parser = vcli.make_parser(
         "bench-midimap-write",
@@ -707,6 +734,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
     step_rows: list[Any] = []
 
     agreed_write = agreed_restore = False
+    store_attempted = False
+    store_agreed: bool | None = None
     try:
         if getattr(bridge, "swept", False):
             print(f"sweep: ports swept in {bridge.probe_seconds:.2f}s")
@@ -866,23 +895,54 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
                 if confirmation != str(location):
                     print("store: aborted (location not confirmed)")
                 else:
+                    store_attempted = True
                     try:
                         bridge.send_midimap(location, list(words))
-                        print(f"stored midimap {index} to location {location}")
+                        stored_back = list(bridge.read_midimap(location))
+                        agreed = count_agreeing_words(words, stored_back)
+                        total = len(words)
+                        store_agreed = (
+                            len(stored_back) == total and agreed == total
+                        )
+                        if store_agreed:
+                            print(
+                                f"stored to M{location:02d} (read back "
+                                f"{agreed}/{total} words agree)"
+                            )
+                        else:
+                            print(
+                                f"store to M{location:02d}: read-back "
+                                f"disagreed ({agreed}/{total} words agree)"
+                            )
                     except Exception as exc:
+                        store_agreed = False
                         print(f"store: failed: {exc}")
     finally:
         bridge.close()
 
     # The exit code IS the verdict: unattended runs are only useful if a
-    # disagreement fails them. The unit's own dump is the oracle.
-    if not (agreed_write and agreed_restore):
-        print(
-            "VERDICT: FAIL -- a read-back disagreed; the unit did not take "
-            "a write, or did not restore"
-        )
-        return 1
-    print("VERDICT: PASS -- written and restored, both read back and agreed")
+    # disagreement fails them. The unit's own dump is the oracle; a store
+    # that was attempted and did not read back agreeing fails too.
+    code = exit_code(
+        agreed_write,
+        agreed_restore,
+        store_attempted=store_attempted,
+        store_agreed=store_agreed,
+    )
+    if code != 0:
+        if not (agreed_write and agreed_restore):
+            print(
+                "VERDICT: FAIL -- a read-back disagreed; the unit did not "
+                "take a write, or did not restore"
+            )
+        else:
+            print("VERDICT: FAIL -- the store did not read back agreeing")
+        return code
+    suffix = " (store read back and agreed)" if store_attempted else ""
+    print(
+        "VERDICT: PASS -- written and restored, both read back and agreed"
+        + suffix
+    )
     return 0
 
 

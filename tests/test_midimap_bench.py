@@ -102,6 +102,32 @@ def test_help_exits_zero() -> None:
     assert caught.value.code == 0
 
 
+def test_a_store_that_disagrees_fails_the_verdict() -> None:
+    """The store is the destructive step; agreement is part of the verdict."""
+    assert bench.exit_code(True, True) == 0
+    assert (
+        bench.exit_code(True, True, store_attempted=True, store_agreed=True)
+        == 0
+    )
+    assert (
+        bench.exit_code(True, True, store_attempted=True, store_agreed=False)
+        == 1
+    )
+    # attempted with no result recorded is not a pass
+    assert (
+        bench.exit_code(True, True, store_attempted=True, store_agreed=None)
+        == 1
+    )
+    assert bench.exit_code(True, False) == 1
+    assert bench.exit_code(False, True) == 1
+
+
+def test_count_agreeing_words() -> None:
+    assert bench.count_agreeing_words([1, 2, 3], [1, 9, 3]) == 2
+    assert bench.count_agreeing_words([1, 2], [1, 2, 3]) == 2
+    assert bench.count_agreeing_words([], []) == 0
+
+
 def testAliases_and_plan_at_top() -> None:
     # alias family should agree
     assert bench.make_plan(offset=14, old_value=1, delta=1).new_value == 2
