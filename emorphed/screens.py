@@ -24,7 +24,7 @@ from typing import Any, ClassVar
 from emorphed.text import escape, literal
 from vinsynlib import keys
 from vinsynlib.keys import wrap_blocks
-from vinsynlib.ui.hints import KeyHints
+from vinsynlib.ui.hints import KeyHints as _LibraryKeyHints
 from vinsynlib.ui.prompt import PromptScreen
 from vinsynlib.ui.report import ReportScreen as _Frame
 
@@ -50,6 +50,28 @@ class ReportScreen(_Frame):
         ("q", "close", "Close"),
         ("enter", "close", "Close"),
     ]
+
+
+class KeyHints(_LibraryKeyHints):
+    """The library legend, relaid out after every re-wrap.
+
+    The library widget re-wraps its text on mount and on resize but never
+    asks for a layout, so ``height: auto`` keeps whatever height the first
+    render gave it. That first render happens before the widget has a width:
+    the wrap falls back to its minimum, the whole legend stacks into about a
+    dozen lines, and the footer stays that tall -- a band of empty panel
+    under the keys -- until the terminal is resized. Requesting the layout
+    after each re-wrap keeps the footer only as tall as the wrapped text,
+    which is the point of wrapping it here at all.
+    """
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.call_after_refresh(self.refresh, layout=True)
+
+    def on_resize(self) -> None:
+        super().on_resize()
+        self.call_after_refresh(self.refresh, layout=True)
 
 
 #: Re-exported from vinsynlib: one line of text, submits on enter, cancels

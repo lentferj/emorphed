@@ -37,7 +37,7 @@ from emorphed.app import (
 )
 from emorphed.demo import DemoDevice, _seed_midimap
 from emorphed.scan import ScanScreen
-from emorphed.screens import PromptScreen, ReportScreen
+from emorphed.screens import KeyHints, PromptScreen, ReportScreen
 from emu import backup as bk
 from emu import banks, config
 from emu import catalog as cat
@@ -1482,3 +1482,30 @@ class TestGroupPUndoAndReadback:
             await pilot.pause()
             assert app._changes == []
             assert any("stayed silent" in m for m, _ in said), said
+
+
+class TestTheFooterFitsItsText:
+    """The footer is a wrapped legend, not a fixed band.
+
+    The library re-wraps the hints but never asks for a layout, so the first
+    render -- before the widget has a width -- laid the whole legend out at
+    the minimum width and left the footer that tall until the terminal was
+    resized. The view then wasted half the screen on a few keys.
+    """
+
+    async def test_the_footer_is_a_few_lines_not_a_band(self) -> None:
+        app = EmorphedApp(DemoDevice())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            hints = app.query_one(KeyHints)
+            assert hints.size.height <= 4
+
+    async def test_the_footer_reflows_when_the_terminal_changes(self) -> None:
+        app = EmorphedApp(DemoDevice())
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            wide = app.query_one(KeyHints).size.height
+            await pilot.resize_terminal(70, 40)
+            await pilot.pause()
+            narrow = app.query_one(KeyHints).size.height
+        assert narrow > wide

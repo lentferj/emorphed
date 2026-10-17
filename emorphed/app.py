@@ -64,7 +64,12 @@ from textual.widgets import DataTable, Header, Static
 
 from emorphed import edit as edmod
 from emorphed.scan import SCAN_OFFER, ScanOfferScreen, ScanScreen
-from emorphed.screens import KEY_HINTS, PromptScreen, ReportScreen
+from emorphed.screens import (
+    KEY_HINTS,
+    KeyHints,
+    PromptScreen,
+    ReportScreen,
+)
 from emorphed.text import literal
 from emu import backup as bkmod
 from emu import banks
@@ -79,7 +84,6 @@ from vinsynlib.build import build_of
 from vinsynlib.cli import add_common_arguments, make_parser, validate_common
 from vinsynlib.keys import wrap_blocks as _wrap_blocks
 from vinsynlib.ui.confirm import ConfirmScreen
-from vinsynlib.ui.hints import KeyHints
 from vinsynlib.ui.modals import RatingFilter, RatingFilterScreen
 from vinsynlib.ui.work import QUIET_BRIDGE_ERRORS, BusyGate, close_when_idle
 from vinsynlib.undo import Record, UndoLog
