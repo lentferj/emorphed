@@ -60,6 +60,103 @@ def demo_name(region_id: str, number: int) -> str:
     return f"{tag}:{head}{tail}"[: m.NAME_CHARS].ljust(m.NAME_CHARS)
 
 
+#: The name the demo midimap carries. Twelve characters, invented, and
+#: deliberately not anybody's product, so a screenshot of the editor cannot
+#: be mistaken for a real unit's map.
+_MIDIMAP_NAME = "Demo Midimap"
+
+
+def _channel_word(channel: int, label: str) -> int:
+    """The offset of ``label`` in channel ``channel`` (1-16).
+
+    The manual lays sixteen identical twenty-word channel blocks end to end
+    (manual p.232, "... for 16 channels (20 parms each)"), so the
+    ``channel``-th occurrence of a label in :data:`emu.midimap.PARAMS` *is*
+    that channel's word. Reading the offset off the table keeps this seed
+    from carrying a second copy of the layout that could drift from it.
+    """
+    seen = 0
+    for param in mm.PARAMS:
+        if param.label == label:
+            seen += 1
+            if seen == channel:
+                return param.offset
+    raise ValueError(f"no {label!r} in channel {channel}")
+
+
+def _choice_value(param: mm.Param, label: str) -> int:
+    """The wire value a choices parameter gives ``label``.
+
+    The value comes from the table's own pairing
+    (:func:`emu.midimap.choices_for`), not from the label's screen position:
+    an effect type's number is a unique ID, not an index (manual p.242).
+    """
+    for value, name in mm.choices_for(param):
+        if name == label:
+            return value
+    raise ValueError(f"{label!r} is not a choice of {param.label}")
+
+
+def _seed_midimap() -> list[int]:
+    """A deterministic, plausible midimap for the demo unit.
+
+    The editor used to open on ``[0] * 360`` -- every value zero and a name
+    of ``????????????`` -- which reads as a broken screen rather than an
+    empty map. This builds one worth looking at, and takes every value from
+    the manual's own table so nothing here can drift from it: channel words
+    by their label (:func:`_channel_word`), enumerated values by their name
+    (:func:`_choice_value`), and the effect's parameter range from
+    :func:`emu.midimap.fx_params_for`. Channels 1 and 2 carry different
+    programs and volumes; channels 3-16 stay disabled; the A effect is a
+    room reverb.
+    """
+    words = mm.set_name([0] * 360, _MIDIMAP_NAME)
+
+    def put(channel: int, label: str, value: int) -> None:
+        words[_channel_word(channel, label)] = value
+
+    def choice(channel: int, label: str, name: str) -> int:
+        return _choice_value(mm.param_at(_channel_word(channel, label)), name)
+
+    # Channel 1: a RAM preset, loud, with the routing switches on.
+    put(1, "Ch. Program", 0)
+    put(1, "Ch. Bank", choice(1, "Ch. Bank", "RAM Presets"))
+    put(1, "Ch. Volume", 100)
+    put(1, "Ch. Pan", choice(1, "Ch. Pan", "0"))
+    # Ch. Mix Bus is 0 here -- the table spells 0 "Main"; the manual's
+    # "Preset" is -1 on the wire (signed values, CLAUDE.md).
+    put(1, "Ch. Mix Bus", choice(1, "Ch. Mix Bus", "Main"))
+    put(1, "Ch. Enable", 1)
+    put(1, "Ch. ProgChg Enbl", 1)
+    put(1, "Ch. BankChg Enbl", 1)
+    put(1, "Ch. VolCtl Enbl", 1)
+
+    # Channel 2: a different program and volume, so its summary row does
+    # not read the same as channel 1's.
+    put(2, "Ch. Program", 1)
+    put(2, "Ch. Bank", choice(2, "Ch. Bank", "RAM Presets"))
+    put(2, "Ch. Volume", 90)
+    put(2, "Ch. Pan", choice(2, "Ch. Pan", "0"))
+    put(2, "Ch. Mix Bus", choice(2, "Ch. Mix Bus", "Main"))
+    put(2, "Ch. Enable", 1)
+    put(2, "Ch. ProgChg Enbl", 1)
+
+    # Channels 3-16 keep the zero map they started as: disabled, which is
+    # what "at most" wants and why the seed starts from zero.
+
+    # Global / Effects: a room reverb on the A processor, its first
+    # parameter at the middle of the range the manual gives that type.
+    fx_a_type = mm.offset_of("FX A Type")
+    type_value = _choice_value(mm.param_at(fx_a_type), "Room")
+    words[fx_a_type] = type_value
+    fx_a_params = mm.fx_params_for(type_value)
+    if fx_a_params:
+        _label, low, high, _choices = fx_a_params[0]
+        words[mm.offset_of("FX A Parm Vals")] = (low + high) // 2
+
+    return words
+
+
 class DemoDevice:
     """Answers the subset of the protocol emorphed speaks."""
 
@@ -99,13 +196,17 @@ class DemoDevice:
         self.midimap_reads: list[int] = []
         #: The *scratch* midimap edits land in: a parameter write (command
         #: 0x03) edits this, so the live read (command 0x02,
-        #: :meth:`read_parameter`) sees the new value.
-        self._midimap: list[int] = [0] * 360
+        #: :meth:`read_parameter`) sees the new value. It starts as a
+        #: plausible map, not a wall of zeroes (:func:`_seed_midimap`), so
+        #: the editor has something worth showing.
+        seed = _seed_midimap()
+        self._midimap: list[int] = list(seed)
         #: The *stored* midimap a command 0x46/0x47 dump returns. A
         #: parameter write does NOT touch this, so ``read_midimap`` keeps
         #: reporting the previously stored map -- the scratch/stored
-        #: distinction the manual draws on p.232.
-        self._stored_midimap: list[int] = [0] * 360
+        #: distinction the manual draws on p.232. It starts as the same
+        #: seed, as loading a stored map into the current one does.
+        self._stored_midimap: list[int] = list(seed)
         self._closed = False
 
     def close(self) -> None:

@@ -1,13 +1,18 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Pure tests for emorphed/edit.py and midimap data framing."""
+"""Pure tests for emorphed/edit.py, midimap data framing, and the demo
+midimap seed."""
 
 from __future__ import annotations
 
 import pytest
 
 from emorphed import edit as E
-from emorphed.demo import DemoDevice
+from emorphed.demo import DemoDevice, _seed_midimap
 from emu import messages as m
+from emu import midimap as mm
+
+#: The largest fourteen-bit word a midimap body carries.
+_WORD_MAX = 0x3FFF
 
 
 def test_gate_locked_refuses_allow() -> None:
@@ -125,3 +130,89 @@ def test_demo_send_midimap_word_count() -> None:
     dev.send_midimap(2, words)
     assert dev.midimap_stores[-1] == (2, words)
     assert dev.read_midimap(2) == words
+
+
+# --- the demo midimap seed (D1) ------------------------------------------
+
+
+def test_demo_read_midimap_returns_the_seed() -> None:
+    assert DemoDevice().read_midimap(0) == _seed_midimap()
+
+
+def test_seed_is_a_deterministic_360_word_map() -> None:
+    seed = _seed_midimap()
+    assert len(seed) == 360  # noqa: PLR2004
+    assert seed == _seed_midimap()
+    assert all(0 <= word <= _WORD_MAX for word in seed)
+
+
+def test_seed_name_is_the_invented_twelve_characters() -> None:
+    name = mm.name_of(_seed_midimap())
+    assert name == "Demo Midimap"
+    assert len(name) == 12  # noqa: PLR2004
+    assert all(32 <= ord(char) < 128 for char in name)  # noqa: PLR2004
+
+
+def test_seed_channel_one_holds_the_expected_values() -> None:
+    seed = _seed_midimap()
+    # These offsets are the manual's (midimap.PARAMS): channel 1 runs from
+    # offset 12, and the first twenty words are one channel block.
+    assert mm.param_at(12).label == "Ch. Program"
+    assert seed[12] == 0  # Ch. Program
+    assert seed[13] == 0  # Ch. Bank, RAM Presets
+    assert seed[14] == 100  # noqa: PLR2004  # Ch. Volume
+    assert seed[15] == 0  # Ch. Pan, "0"
+    assert seed[16] == 0  # Ch. Mix Bus, Main
+    assert seed[17] == 1  # Ch. Enable
+    assert seed[18] == 1  # Ch. ProgChg Enbl
+    assert seed[19] == 1  # Ch. BankChg Enbl
+    assert seed[20] == 1  # Ch. VolCtl Enbl
+
+
+def test_seed_channel_two_differs_from_channel_one() -> None:
+    seed = _seed_midimap()
+    # Channel 2 starts one twenty-word block later, at offset 32.
+    assert mm.param_at(32).label == "Ch. Program"
+    assert seed[32] == 1  # Ch. Program
+    assert seed[34] == 90  # noqa: PLR2004  # Ch. Volume
+    assert seed[37] == 1  # Ch. Enable
+    assert (seed[32], seed[34]) != (seed[12], seed[14])
+
+
+def test_seed_leaves_channels_three_to_sixteen_disabled() -> None:
+    seed = _seed_midimap()
+    for channel in range(3, 17):
+        base = 12 + (channel - 1) * 20
+        assert mm.param_at(base + 5).label == "Ch. Enable"
+        assert seed[base : base + 20] == [0] * 20
+
+
+def test_seed_sets_a_named_fx_a_type_and_one_of_its_params() -> None:
+    seed = _seed_midimap()
+    fx_type = mm.param_at(333)
+    assert fx_type.label == "FX A Type"
+    assert mm.spell(fx_type, seed[333]) == "Room"
+    params = mm.fx_params_for(seed[333])
+    assert params, "the seeded effect type defines a parameter"
+    label, low, high, _choices = params[0]
+    assert label == "Decay Time"  # the manual's name for Room's parameter
+    first_param = mm.offset_of("FX A Parm Vals")
+    assert first_param == 334  # noqa: PLR2004
+    assert low <= seed[first_param] <= high
+    assert seed[first_param] != 0
+
+
+def test_demo_read_parameter_answers_the_seed() -> None:
+    dev = DemoDevice()
+    seed = _seed_midimap()
+    for offset in (12, 13, 14, 15, 16, 17, 32, 34, 333, 334):
+        assert dev.read_parameter(mm.PARAM_BASE + offset) == seed[offset]
+
+
+def test_demo_scratch_and_stored_both_start_as_the_seed() -> None:
+    dev = DemoDevice()
+    seed = _seed_midimap()
+    assert dev.read_midimap(0) == seed
+    # The scratch map is what a parameter read answers from, and it starts
+    # from the same seed as the stored dump.
+    assert dev.read_scratch_params() == seed
