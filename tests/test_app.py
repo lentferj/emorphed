@@ -35,13 +35,14 @@ from emorphed.app import (
     VIEW_BANK_FAVOURITES,
     EmorphedApp,
 )
-from emorphed.demo import DemoDevice
+from emorphed.demo import DemoDevice, _seed_midimap
 from emorphed.scan import ScanScreen
 from emorphed.screens import PromptScreen, ReportScreen
 from emu import backup as bk
 from emu import banks, config
 from emu import catalog as cat
 from emu import favorites as fav
+from emu import midimap as mm
 from vinsynlib.ui.confirm import ConfirmScreen
 from vinsynlib.ui.modals import RatingFilter
 
@@ -682,8 +683,10 @@ class TestMidimapAppWriteGateAndStore:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.action_toggle_all_channels()
+            await pilot.pause()
             screen.query_one("#midimap-table", DataTable).move_cursor(
-                row=1, column=2
+                row=2, column=2
             )
             said: list[tuple[str, bool]] = []
             original_say = screen.say
@@ -726,8 +729,10 @@ class TestMidimapAppWriteGateAndStore:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.action_toggle_all_channels()
+            await pilot.pause()
             screen.query_one("#midimap-table", DataTable).move_cursor(
-                row=1, column=2
+                row=2, column=2
             )
             screen.action_toggle_write_gate()
             before = len(device.parameter_writes)
@@ -777,8 +782,10 @@ class TestMidimapAppWriteGateAndStore:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.action_toggle_all_channels()
+            await pilot.pause()
             screen.query_one("#midimap-table", DataTable).move_cursor(
-                row=1, column=2
+                row=2, column=2
             )
             screen.action_toggle_write_gate()
             await pilot.pause()
@@ -980,8 +987,10 @@ class TestMidimapParamUndo:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.action_toggle_all_channels()
+            await pilot.pause()
             screen.query_one("#midimap-table", DataTable).move_cursor(
-                row=1, column=2
+                row=2, column=2
             )
             said = _capture(app)
             writes_before = len(device.parameter_writes)
@@ -991,6 +1000,9 @@ class TestMidimapParamUndo:
             assert len(device.parameter_writes) - writes_before == 1
             param, written = device.parameter_writes[-1]
             assert written != 0
+            # The demo seed's channel-1 Ch. Program is 0, so undo must put
+            # the seed's value back rather than a bare zero.
+            seeded_old = _seed_midimap()[param - mm.PARAM_BASE]
 
             writes_before2 = len(device.parameter_writes)
             app.action_undo()
@@ -998,8 +1010,8 @@ class TestMidimapParamUndo:
             await pilot.pause()
             assert len(device.parameter_writes) - writes_before2 == 1
             assert device.parameter_writes[-1][0] == param
-            assert device.parameter_writes[-1][1] == 0
-            assert device.read_parameter(param) == 0
+            assert device.parameter_writes[-1][1] == seeded_old
+            assert device.read_parameter(param) == seeded_old
             assert not any(refused for _, refused in said), said
             assert app._changes == []
 
@@ -1016,7 +1028,7 @@ class TestMidimapParamUndo:
             app.action_undo_all()
             await _settle(app, pilot)
             await pilot.pause()
-            assert device.read_parameter(param) == 0
+            assert device.read_parameter(param) == seeded_old
 
 
 class TestMidimapCurrentIndexAndScratch:
@@ -1375,15 +1387,17 @@ class TestGroupPUndoAndReadback:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.action_toggle_all_channels()
+            await pilot.pause()
             screen.query_one("#midimap-table", DataTable).move_cursor(
-                row=1, column=2
+                row=2, column=2
             )
             await pilot.pause()
             screen.action_nudge_up()
             await _settle(app, pilot)
             await pilot.pause()
             screen.query_one("#midimap-table", DataTable).move_cursor(
-                row=2, column=2
+                row=3, column=2
             )
             await pilot.pause()
             screen.action_nudge_up()
@@ -1423,8 +1437,10 @@ class TestGroupPUndoAndReadback:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.action_toggle_all_channels()
+            await pilot.pause()
             screen.query_one("#midimap-table", DataTable).move_cursor(
-                row=1, column=2
+                row=2, column=2
             )
             await pilot.pause()
             screen.action_nudge_up()
@@ -1454,8 +1470,10 @@ class TestGroupPUndoAndReadback:
             await _settle(app, pilot)
             await pilot.pause()
             screen = cast(Any, app.screen)
+            screen.action_toggle_all_channels()
+            await pilot.pause()
             screen.query_one("#midimap-table", DataTable).move_cursor(
-                row=1, column=2
+                row=2, column=2
             )
             await pilot.pause()
             said = _capture(app)

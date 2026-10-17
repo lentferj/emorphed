@@ -60,6 +60,11 @@ async def test_nudge_and_typing_call_on_edit() -> None:
         )
         app.push_screen(screen)
         await pilot.pause()
+        screen.action_edit_current()
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        table.move_cursor(row=screen._ordered.index(14), column=3)
+        await pilot.pause()
         screen.action_nudge_up()
         await pilot.pause()
         assert (14, 6) in calls
@@ -83,6 +88,11 @@ async def test_locked_gate_no_on_edit_and_refusal() -> None:
             editor, {14: 5}, on_edit=lambda o, v: calls.append((o, v))
         )
         app.push_screen(screen)
+        await pilot.pause()
+        screen.action_edit_current()
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        table.move_cursor(row=screen._ordered.index(14), column=3)
         await pilot.pause()
         said: list[tuple[str, bool]] = []
         original = screen.say
@@ -108,6 +118,11 @@ async def test_choices_opens_picker_and_returns_value() -> None:
             editor, {13: 0}, on_edit=lambda o, v: calls.append((o, v))
         )
         app.push_screen(screen)
+        await pilot.pause()
+        screen.action_edit_current()
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        table.move_cursor(row=screen._ordered.index(13), column=3)
         await pilot.pause()
 
         def fake_push(_scr: Any, callback: Any = None) -> None:
@@ -180,6 +195,11 @@ async def test_range_enter_prompt_contains_label_range_value() -> None:
         editor = MidimapEditor(gate=EditGate(armed=True))
         screen = MidimapEditScreen(editor, {14: 127})
         app.push_screen(screen)
+        await pilot.pause()
+        screen.action_edit_current()
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        table.move_cursor(row=screen._ordered.index(14), column=3)
         await pilot.pause()
 
         pushed: list[Any] = []
@@ -312,6 +332,11 @@ async def test_typing_label_and_out_of_range() -> None:
         )
         app.push_screen(screen)
         await pilot.pause()
+        screen.action_edit_current()
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        table.move_cursor(row=screen._ordered.index(14), column=3)
+        await pilot.pause()
 
         screen.on_key(_event("2", "2"))
         screen.on_key(_event("0", "0"))
@@ -357,20 +382,68 @@ async def test_header_and_cell_order_agree() -> None:
         await pilot.pause()
         table = screen.query_one("#midimap-table", DataTable)
         assert list(table.columns) == [
-            "offset",
+            "#",
             "section",
-            "label",
+            "parameter",
             "value",
-            "range",
+            "allowed",
         ]
         row = table.get_row_at(0)
         assert list(row) == [
             "name",
             "Name",
             "Midimap Name",
-            "TESTNAME1234",
-            "32-127",
+            '"TESTNAME1234"',
+            "text · 12 chars",
         ]
+
+
+@pytest.mark.asyncio
+async def test_named_screen_shows_quoted_name_and_text_range() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        index = table.get_row_index("name")
+        row = table.get_row_at(index)
+        assert row[3] == '"TESTNAME1234"'
+        assert row[4] == "text · 12 chars"
+        assert "text · 12 chars" in _status(screen)
+
+
+@pytest.mark.asyncio
+async def test_blank_name_shows_empty_never_question_marks() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        params = dict.fromkeys(range(12), 0)
+        screen = MidimapEditScreen(editor, params)
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        row = table.get_row_at(table.get_row_index("name"))
+        assert row[3] == "(empty)"
+        assert "?" not in str(row[3])
+        assert "(empty)" in _status(screen)
+
+
+@pytest.mark.asyncio
+async def test_unprintable_name_reads_as_empty_not_question_marks() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        # words that decode only to spaces and '?' are blank too
+        params = {i: (63 if i % 2 else 128 + 32) for i in range(12)}
+        screen = MidimapEditScreen(editor, params)
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        row = table.get_row_at(table.get_row_index("name"))
+        assert row[3] == "(empty)"
+        assert "?" not in str(row[3])
 
 
 @pytest.mark.asyncio
@@ -477,6 +550,11 @@ async def test_refused_result_restores_optimistic_cell() -> None:
         screen = MidimapEditScreen(editor, {14: 5})
         app.push_screen(screen)
         await pilot.pause()
+        screen.action_edit_current()
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        table.move_cursor(row=screen._ordered.index(14), column=3)
+        await pilot.pause()
         screen.action_nudge_up()
         await pilot.pause()
         painted = 6
@@ -490,6 +568,299 @@ async def test_refused_result_restores_optimistic_cell() -> None:
         await pilot.pause()
         restored = 5
         assert screen._values[14] == restored
+
+
+@pytest.mark.asyncio
+async def test_default_view_one_summary_per_channel() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        summaries = [
+            r
+            for r in screen._ordered
+            if isinstance(r, str) and r.startswith("ch")
+        ]
+        assert len(summaries) == 16  # noqa: PLR2004
+        assert not any(
+            isinstance(r, int) and 12 <= r < 332  # noqa: PLR2004
+            for r in screen._ordered
+        )
+
+
+@pytest.mark.asyncio
+async def test_enter_expands_then_collapses_channel() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        idx = screen._ordered.index("ch1")
+        table.move_cursor(row=idx, column=3)
+        await pilot.pause()
+
+        screen.action_edit_current()
+        await pilot.pause()
+        for off in range(12, 32):
+            assert off in screen._ordered
+        assert screen._current_row() == "ch1"
+
+        screen.action_edit_current()
+        await pilot.pause()
+        for off in range(12, 32):
+            assert off not in screen._ordered
+
+
+@pytest.mark.asyncio
+async def test_c_expands_all_then_collapses_all() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+
+        screen.action_toggle_all_channels()
+        await pilot.pause()
+        assert 12 in screen._ordered  # noqa: PLR2004
+        assert 331 in screen._ordered  # noqa: PLR2004
+
+        screen.action_toggle_all_channels()
+        await pilot.pause()
+        assert 12 not in screen._ordered  # noqa: PLR2004
+        assert "ch1" in screen._ordered
+
+
+@pytest.mark.asyncio
+async def test_filter_shows_parameter_in_collapsed_channel() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        assert "ch1" in screen._ordered
+        assert 14 not in screen._ordered  # noqa: PLR2004
+
+        def fake_push(scr: Any, callback: Any = None) -> None:
+            if callback is not None:
+                callback("Volume")
+
+        app.push_screen = fake_push  # type: ignore[assignment]
+        screen.action_filter()
+        await pilot.pause()
+        assert 14 in screen._ordered  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_typing_digit_on_summary_does_nothing() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, {14: 5})
+        app.push_screen(screen)
+        await pilot.pause()
+        # cursor rests on the ch1 summary row (row 0, no name block)
+        assert screen._current_row() == "ch1"
+        screen.on_key(_event("5", "5"))
+        await pilot.pause()
+        assert screen._typing == ""
+        assert screen._typing_offset is None
+
+
+# ---- F1 additions ----
+
+
+@pytest.mark.asyncio
+async def test_pilot_c_toggles_all_channels() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        assert "ch1" in screen._ordered
+        assert 12 not in screen._ordered  # noqa: PLR2004
+        await pilot.press("c")
+        await pilot.pause()
+        assert 12 in screen._ordered  # noqa: PLR2004
+        await pilot.press("c")
+        await pilot.pause()
+        assert 12 not in screen._ordered  # noqa: PLR2004
+        assert "ch1" in screen._ordered
+
+
+@pytest.mark.asyncio
+async def test_pilot_enter_expands_summary_row() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        idx = screen._ordered.index("ch1")
+        table.move_cursor(row=idx, column=3)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        for off in range(12, 32):
+            assert off in screen._ordered
+        assert screen._current_row() == "ch1"
+        await pilot.press("enter")
+        await pilot.pause()
+        for off in range(12, 32):
+            assert off not in screen._ordered
+
+
+@pytest.mark.asyncio
+async def test_toggle_all_channels_keeps_cursor_row() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        idx = screen._ordered.index("ch3")
+        table.move_cursor(row=idx, column=3)
+        await pilot.pause()
+        assert screen._current_row() == "ch3"
+        screen.action_toggle_all_channels()
+        await pilot.pause()
+        assert screen._current_row() == "ch3"
+
+
+@pytest.mark.asyncio
+async def test_nudge_on_summary_says_why() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, {14: 5})
+        app.push_screen(screen)
+        await pilot.pause()
+        # cursor on ch1 summary (no name block)
+        assert screen._current_row() == "ch1"
+        said: list[str] = []
+        original = screen.say
+
+        def captured(message: str, *, refused: bool = False) -> None:
+            said.append(message)
+            original(message, refused=refused)
+
+        screen.say = captured  # type: ignore[method-assign]
+        screen.action_nudge_up()
+        await pilot.pause()
+        assert any("channel summary is expanded with enter" in m for m in said)
+
+
+@pytest.mark.asyncio
+async def test_filter_plus_fx_type_change_keeps_ordered_in_sync() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        params = _full_params()
+        params[333] = 0
+        screen = MidimapEditScreen(editor, params)
+        app.push_screen(screen)
+        await pilot.pause()
+
+        def fake_push(scr: Any, callback: Any = None) -> None:
+            if callback is not None:
+                callback("Rate")
+
+        app.push_screen = fake_push  # type: ignore[assignment]
+        screen.action_filter()
+        await pilot.pause()
+
+        screen.result(True, "", parameter_id=333, value=11)
+        await pilot.pause()
+
+        table = screen.query_one("#midimap-table", DataTable)
+        keys = [str(table.get_row_at(i)[0]) for i in range(table.row_count)]
+        ordered_keys = [
+            "name" if r == "name" else str(r) for r in screen._ordered
+        ]
+        assert keys == ordered_keys
+
+
+@pytest.mark.asyncio
+async def test_summary_sentence_text() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        row = table.get_row_at(table.get_row_index("ch1"))
+        # value cell is the summary sentence
+        assert row[3].startswith("prog ")
+        assert "switches on" in row[3]
+
+
+@pytest.mark.asyncio
+async def test_ch_range_text_both_states() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        idx = screen._ordered.index("ch1")
+        table.move_cursor(row=idx, column=3)
+        await pilot.pause()
+        # collapsed
+        row = table.get_row_at(table.get_row_index("ch1"))
+        assert row[4] == "20 params · enter to expand"
+        # expand
+        screen.action_edit_current()
+        await pilot.pause()
+        # cursor restored to ch1; range text now collapse
+        table = screen.query_one("#midimap-table", DataTable)
+        row = table.get_row_at(table.get_row_index("ch1"))
+        assert row[4] == "20 params · enter to collapse"
+
+
+@pytest.mark.asyncio
+async def test_section_written_once() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        screen.action_toggle_all_channels()  # expand all
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        # continuation row in Channel 1: offset 13 has blank section
+        idx = table.get_row_index("13")
+        row = table.get_row_at(idx)
+        assert row[1] == ""
+
+
+@pytest.mark.asyncio
+async def test_collapsed_summary_updates_after_edit() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, {14: 5}, on_edit=lambda o, v: None)
+        app.push_screen(screen)
+        await pilot.pause()
+        # channel collapsed: ch1 summary present
+        assert "ch1" in screen._ordered
+        assert 14 not in screen._ordered  # noqa: PLR2004
+        # edit via result() readback
+        screen.result(True, "", parameter_id=14, value=9)
+        await pilot.pause()
+        table = screen.query_one("#midimap-table", DataTable)
+        row = table.get_row_at(table.get_row_index("ch1"))
+        assert "vol 9" in row[3] or "9" in row[3]
 
 
 if __name__ == "__main__":

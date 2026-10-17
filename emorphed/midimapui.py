@@ -5,8 +5,11 @@
 
 """The midimap editor screen.
 
-A modal over the browser: the unit's own parameter table, one row per word,
-with the value under a cell cursor. A screen owns no worker and sends
+A modal over the browser: the unit's own parameter table, with the value
+under a cell cursor. Each of the sixteen channels is collapsed to a single
+summary row by default (program, bank, volume, pan, mix bus and how many
+switches are on) and expands on Enter to show its twenty parameters;
+Global/Effects rows are always expanded. A screen owns no worker and sends
 nothing on its own -- every change goes out through ``on_edit`` (or
 ``on_name`` for the twelve-character name, which is one row here).
 """
@@ -75,6 +78,7 @@ class MidimapEditScreen(ModalScreen[None]):
         Binding("x", "go_effects", "Effects"),
         Binding("n", "next_section", "Next section"),
         Binding("p", "prev_section", "Prev section"),
+        Binding("c", "toggle_all_channels", "Collapse/expand all channels"),
         Binding("/", "filter", "Filter"),
     ]
 
@@ -112,6 +116,7 @@ class MidimapEditScreen(ModalScreen[None]):
         self._typing: str = ""
         self._typing_offset: int | None = None
         self._filter: str = ""
+        self._expanded: set[int] = set()
         self._build_rows()
         self._ordered: list[Any] = self._visible_rows()
 
@@ -129,19 +134,28 @@ class MidimapEditScreen(ModalScreen[None]):
         return any(0 <= off < _NAME_WORDS for off in self._values)
 
     def _build_rows(self) -> None:
-        offsets = sorted(self._values)
         rows: list[Any] = []
         if self._has_name_block():
             rows.append("name")
-        for off in offsets:
-            if 0 <= off < _NAME_WORDS:
-                continue
-            rows.append(off)
+        for channel in range(1, 17):
+            rows.append(f"ch{channel}")
+            if channel in self._expanded:
+                base = _CHANNEL_BASE + (channel - 1) * _CHANNEL_STRIDE
+                for index in range(_CHANNEL_STRIDE):
+                    rows.append(base + index)
+        for off in sorted(self._values):
+            if off >= _GLOBAL_BASE:
+                rows.append(off)
         self._all_rows: list[Any] = rows
 
     def _section_of(self, row: Any) -> str:
         if row == "name":
             return "Name"
+        if isinstance(row, str) and row.startswith("ch"):
+            try:
+                return f"Channel {int(row[2:])}"
+            except ValueError:
+                pass
         off = int(row)
         if off < _GLOBAL_BASE:
             channel = (off - _CHANNEL_BASE) // _CHANNEL_STRIDE + 1
@@ -156,14 +170,21 @@ class MidimapEditScreen(ModalScreen[None]):
                 return mm.param_at(0)
             except Exception:
                 return None
+        if isinstance(row, str) and row.startswith("ch"):
+            return None
         try:
             return mm.param_at(int(row))
         except Exception:
             return None
 
-    def _label_of(self, row: Any) -> str:
+    def _label_of(self, row: Any) -> str:  # noqa: C901
         if row == "name":
             return "Midimap Name"
+        if isinstance(row, str) and row.startswith("ch"):
+            try:
+                return f"Channel {int(row[2:])}"
+            except ValueError:
+                return str(row)
         off = int(row) if row != "name" else -1
         # FX parameter rows are labelled by the selected effect type.
         if _FX_A_PARM_FIRST <= off <= _FX_A_PARM_LAST:
@@ -194,6 +215,8 @@ class MidimapEditScreen(ModalScreen[None]):
     def _raw_value(self, row: Any) -> int:
         if row == "name":
             return 0
+        if isinstance(row, str) and row.startswith("ch"):
+            return 0
         off = int(row)
         param = self._param_of(row)
         if param is None:
@@ -210,9 +233,55 @@ class MidimapEditScreen(ModalScreen[None]):
                 for w in words
             )
 
-    def _display_value(self, row: Any) -> str:
+    def _name_blank(self) -> bool:
+        """A blank name: twelve words below 32, or only spaces and ``?``."""
+        words = [self._values.get(i, _ASCII_FIRST) for i in range(_NAME_WORDS)]
+        if all(w < _ASCII_FIRST for w in words):
+            return True
+        return set(self._name_text()) <= {" ", "?"}
+
+    def _display_value(self, row: Any) -> str:  # noqa: C901
         if row == "name":
-            return literal(self._name_text())
+            if self._name_blank():
+                return "(empty)"
+            return literal(f'"{self._name_text()}"')
+        if isinstance(row, str) and row.startswith("ch"):
+            try:
+                channel = int(row[2:])
+            except ValueError:
+                return ""
+            base = _CHANNEL_BASE + (channel - 1) * _CHANNEL_STRIDE
+
+            def _raw(off: int) -> int:
+                try:
+                    param = mm.param_at(off)
+                except Exception:
+                    param = None
+                return self._values.get(
+                    off, getattr(param, "low", 0) if param is not None else 0
+                )
+
+            def _spell(off: int) -> str:
+                try:
+                    return mm.spell(mm.param_at(off), _raw(off))
+                except Exception:
+                    return str(_raw(off))
+
+            program_spell = _spell(base + 0)
+            bank_spell = _spell(base + 1)
+            volume_spell = _spell(base + 2)
+            pan_spell = _spell(base + 3)
+            bus_spell = _spell(base + 4)
+            switches = 0
+            for index in range(5, _CHANNEL_STRIDE):
+                off = base + index
+                if _raw(off) == 1:
+                    switches += 1
+            return (
+                f"prog {program_spell} · {bank_spell} · "
+                f"vol {volume_spell} · pan {pan_spell} · "
+                f"bus {bus_spell} · {switches} switches on"
+            )
         param = self._param_of(row)
         value = self._raw_value(row)
         try:
@@ -222,7 +291,15 @@ class MidimapEditScreen(ModalScreen[None]):
 
     def _range_text(self, row: Any) -> str:
         if row == "name":
-            return "32-127"
+            return "text · 12 chars"
+        if isinstance(row, str) and row.startswith("ch"):
+            try:
+                channel = int(row[2:])
+            except ValueError:
+                channel = 0
+            if channel in self._expanded:
+                return "20 params · enter to collapse"
+            return "20 params · enter to expand"
         param = self._param_of(row)
         if param is None:
             return "?"
@@ -234,8 +311,20 @@ class MidimapEditScreen(ModalScreen[None]):
         needle = self._filter.strip().lower()
         if not needle:
             return list(self._all_rows)
+        # When filtering, ignore the collapse so a match is never hidden
+        # inside a channel summary: build from every atomic row.
+        rows: list[Any] = []
+        if self._has_name_block():
+            rows.append("name")
+        for channel in range(1, 17):
+            base = _CHANNEL_BASE + (channel - 1) * _CHANNEL_STRIDE
+            for index in range(_CHANNEL_STRIDE):
+                rows.append(base + index)
+        for off in sorted(self._values):
+            if off >= _GLOBAL_BASE:
+                rows.append(off)
         out: list[Any] = []
-        for row in self._all_rows:
+        for row in rows:
             if needle in self._label_of(row).lower():
                 out.append(row)
         return out
@@ -247,15 +336,21 @@ class MidimapEditScreen(ModalScreen[None]):
             return
         self._ordered = self._visible_rows()
         table.clear()
+        prev_section: str | None = None
         for row in self._ordered:
             section = self._section_of(row)
+            if section == prev_section:
+                section_cell = ""
+            else:
+                section_cell = section
+                prev_section = section
             label = self._label_of(row)
             display = self._display_value(row)
             rng = self._range_text(row)
             key = "name" if row == "name" else str(row)
             table.add_row(
                 key,
-                section,
+                section_cell,
                 label,
                 display,
                 rng,
@@ -322,8 +417,11 @@ class MidimapEditScreen(ModalScreen[None]):
         label = self._label_of(row)
         value: Any = ""
         if row == "name":
-            value = literal(self._name_text())
-            rng = "32-127"
+            value = self._display_value(row)
+            rng = "text · 12 chars"
+        elif isinstance(row, str) and row.startswith("ch"):
+            value = self._display_value(row)
+            rng = self._range_text(row)
         else:
             off = int(row)
             param = self._param_of(row)
@@ -350,19 +448,19 @@ class MidimapEditScreen(ModalScreen[None]):
             )
             yield Static("", classes="status")
             yield Static(
-                "[dim]enter value · / filter · n / p section · x effects · "
-                "h name · w gate · + / - nudge · digits type · r re-read · "
-                "s store · z / Z undo · esc / q close[/dim]",
+                "[dim]enter value · / filter · n / p section · c channels · "
+                "x effects · h name · w gate · + / - nudge · digits type · "
+                "r re-read · s store · z / Z undo · esc / q close[/dim]",
                 classes="hints",
             )
 
     def on_mount(self) -> None:
         table = self.query_one("#midimap-table", DataTable)
-        table.add_column("offset", key="offset")
+        table.add_column("#", key="#")
         table.add_column("section", key="section")
-        table.add_column("label", key="label")
+        table.add_column("parameter", key="parameter")
         table.add_column("value", key="value")
-        table.add_column("range", key="range")
+        table.add_column("allowed", key="allowed")
         self._refresh_table()
         self._update_status()
 
@@ -374,7 +472,7 @@ class MidimapEditScreen(ModalScreen[None]):
         prefix = "[b]refused[/b] · " if refused else ""
         status.update(prefix + message)
 
-    def result(  # noqa: C901
+    def result(  # noqa: C901, PLR0912
         self,
         ok: bool,
         message: str,
@@ -404,20 +502,34 @@ class MidimapEditScreen(ModalScreen[None]):
                 except Exception:
                     table = None
                 if table is not None:
-                    with contextlib.suppress(Exception):
-                        row_key = (
-                            "name"
-                            if isinstance(off, int) and 0 <= off < _NAME_WORDS
-                            else str(off)
-                        )
-                        if row_key == "name":
+                    row_key = (
+                        "name"
+                        if isinstance(off, int) and 0 <= off < _NAME_WORDS
+                        else str(off)
+                    )
+                    if row_key == "name":
+                        with contextlib.suppress(Exception):
                             table.update_cell(
-                                "name", "value", literal(self._name_text())
+                                "name",
+                                "value",
+                                self._display_value("name"),
                             )
-                        else:
-                            with contextlib.suppress(Exception):
-                                spelled = self._spell(int(off), value)
+                    else:
+                        with contextlib.suppress(Exception):
+                            spelled = self._spell(int(off), value)
                             table.update_cell(row_key, "value", spelled)
+                    # A collapsed channel's summary row must follow too.
+                    if (
+                        isinstance(off, int)
+                        and _CHANNEL_BASE <= off < _GLOBAL_BASE
+                    ):
+                        channel = (off - _CHANNEL_BASE) // _CHANNEL_STRIDE + 1
+                        with contextlib.suppress(Exception):
+                            table.update_cell(
+                                f"ch{channel}",
+                                "value",
+                                self._display_value(f"ch{channel}"),
+                            )
 
                     # Re-label the FX parameter rows when a type changes.
                     if isinstance(off, int) and off in (
@@ -434,12 +546,29 @@ class MidimapEditScreen(ModalScreen[None]):
                             row_key = str(row_off)
                             with contextlib.suppress(Exception):
                                 table.update_cell(
-                                    row_key, "label", self._label_of(row_off)
+                                    row_key,
+                                    "parameter",
+                                    self._label_of(row_off),
                                 )
                             # also refresh their value cell is unnecessary
-                # keep filters/rows consistent without a full table rebuild
+                # Rebuild the table so _ordered and the rendered rows agree
+                # (e.g. after an FX-type change relabels rows or a filter is
+                # set); restore the cursor to the row that was current.
                 if "name" in self._all_rows and self._filter:
-                    self._ordered = self._visible_rows()
+                    current = self._current_row()
+                    self._build_rows()
+                    self._refresh_table()
+                    new_idx = (
+                        self._index_of_row(current)
+                        if current is not None
+                        else None
+                    )
+                    if new_idx is not None:
+                        try:
+                            table = self.query_one("#midimap-table", DataTable)
+                            table.move_cursor(row=new_idx, column=3)
+                        except Exception:  # noqa: S110
+                            pass
             if off is not None:
                 self._pre_edit.pop(off, None)
         elif off is not None and off in self._pre_edit:
@@ -473,6 +602,9 @@ class MidimapEditScreen(ModalScreen[None]):
     def _nudge(self, by: int) -> None:  # noqa: C901, PLR0912, PLR0915
         row = self._current_row()
         if row is None:
+            return
+        if isinstance(row, str) and row.startswith("ch"):
+            self.say("the channel summary is expanded with enter")
             return
         if row == "name":
             self.say("the name is edited as text -- press enter")
@@ -539,6 +671,26 @@ class MidimapEditScreen(ModalScreen[None]):
     def action_edit_current(self) -> None:  # noqa: C901, PLR0915
         row = self._current_row()
         if row is None:
+            return
+        if isinstance(row, str) and row.startswith("ch"):
+            try:
+                channel = int(row[2:])
+            except ValueError:
+                return
+            if channel in self._expanded:
+                self._expanded.discard(channel)
+            else:
+                self._expanded.add(channel)
+            self._build_rows()
+            self._refresh_table()
+            new_idx = self._index_of_row(row)
+            if new_idx is not None:
+                try:
+                    table = self.query_one("#midimap-table", DataTable)
+                    table.move_cursor(row=new_idx, column=3)
+                except Exception:  # noqa: S110
+                    pass
+            self._update_status()
             return
         if row == "name":
             current_name = self._name_text()
@@ -689,6 +841,23 @@ class MidimapEditScreen(ModalScreen[None]):
                 pass
         self._update_status()
 
+    def action_toggle_all_channels(self) -> None:
+        row = self._current_row()
+        if self._expanded:
+            self._expanded.clear()
+        else:
+            self._expanded = set(range(1, 17))
+        self._build_rows()
+        self._refresh_table()
+        new_idx = self._index_of_row(row) if row is not None else None
+        if new_idx is not None:
+            try:
+                table = self.query_one("#midimap-table", DataTable)
+                table.move_cursor(row=new_idx, column=3)
+            except Exception:  # noqa: S110
+                pass
+        self._update_status()
+
     def action_next_section(self) -> None:  # noqa: C901, PLR0912
         if not self._ordered:
             return
@@ -787,7 +956,9 @@ class MidimapEditScreen(ModalScreen[None]):
         # Digits type in place for the current cell -- plain ranges only.
         if char is not None and char.isdigit():
             row = self._current_row()
-            if row == "name":
+            if row == "name" or (
+                isinstance(row, str) and row.startswith("ch")
+            ):
                 event.prevent_default()
                 return
             param = self._param_of(row) if row is not None else None
@@ -815,7 +986,11 @@ class MidimapEditScreen(ModalScreen[None]):
             # commit typed number
             row = self._current_row()
             off = row
-            if off is None or off == "name":
+            if (
+                off is None
+                or off == "name"
+                or (isinstance(off, str) and off.startswith("ch"))
+            ):
                 self._typing = ""
                 self._typing_offset = None
                 return
@@ -855,7 +1030,11 @@ class MidimapEditScreen(ModalScreen[None]):
         if key in ("backspace",) and self._typing:
             self._typing = self._typing[:-1]
             row = self._current_row()
-            if row is not None and row != "name":
+            if (
+                row is not None
+                and row != "name"
+                and not (isinstance(row, str) and row.startswith("ch"))
+            ):
                 try:
                     status = self.query_one(".status", Static)
                     p = self._param_of(row)
