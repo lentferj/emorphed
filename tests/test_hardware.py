@@ -34,11 +34,20 @@ and it stays behind its own confirmation in the app. The card-select
 question (TODO 9) is listed here as a manual bench step only; this suite
 prints which card regions emorphed's map knows about and stops, because
 selecting would make the unit play.
+
+The bank request test (U4) writes one full frame per distinct frame length
+to the directory named by ``EMORPHED_BANK_CAPTURE`` (default
+``/tmp/opencode``) as raw ``.syx`` bytes, so the 674-byte framing question
+(TODO item 1) now has a capture step a human can run: set the variable (or
+use the default) and run ``make test-hardware``. The default directory is
+outside the checkout on purpose -- raw captures never live in the repo.
 """
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -102,6 +111,25 @@ def frames_in(blob: bytes) -> list[bytes]:
         end = starts[i + 1] if i + 1 < len(starts) else len(blob)
         out.append(blob[start:end])
     return out
+
+
+def _capture_one_frame_per_length(
+    frames: list[bytes], capture_dir: Path
+) -> list[tuple[Path, int]]:
+    """Write one full frame per distinct length.
+
+    Return (path, length) pairs.
+    """
+    seen: set[int] = set()
+    captured: list[tuple[Path, int]] = []
+    for frame in frames:
+        if len(frame) in seen:
+            continue
+        seen.add(len(frame))
+        path = capture_dir / f"bank_frame_{len(frame)}.syx"
+        path.write_bytes(frame)
+        captured.append((path, len(frame)))
+    return captured
 
 
 class TestHardwareIdentity:
@@ -319,6 +347,17 @@ class TestHardwareBankRequest:
             f"lengths: {lengths_summary}; number stride: {diffs}; "
             f"checksums {matched}/{checked} on known-size frames"
         )
+        # Capture one full frame per distinct length as raw SysEx bytes, so
+        # the 674-byte framing can be analysed later. No decoding, no
+        # assertion about the framing.
+        capture_dir = Path(
+            os.environ.get("EMORPHED_BANK_CAPTURE", "/tmp/opencode")  # noqa: S108
+        )
+        capture_dir.mkdir(parents=True, exist_ok=True)
+        captured = _capture_one_frame_per_length(frames, capture_dir)
+        for path, length in captured:
+            print(f"captured bank frame: {path} ({length} bytes)")
+
         # Recorded, not asserted: the reply/absence resolves TODO item 1's
         # bank-request question. The 674-byte framing is an open question
         # and is recorded here, not decided.
@@ -345,4 +384,44 @@ class TestHardwareTiming:
             f"{len(first)} words, second {len(second)} words; total "
             f"{(end - start) * 1000:.1f} ms. PRESET_GAP (TODO 3) is a "
             "guess until this is recorded."
+        )
+
+    def test_gap_sweep_reports_the_largest_answered_gap(
+        self, unit: b.MorpheusBridge
+    ) -> None:
+        gaps = (0.0, 0.025, 0.05, 0.075, 0.1, 0.15, 0.25)
+
+        # Warm read: exercise the path once before measuring.
+        unit.read_preset(0, timeout=b.DEFAULT_TIMEOUT)
+
+        answered: list[float] = []
+        first_unanswered: float | None = None
+        for gap in gaps:
+            try:
+                first = unit.read_preset(0, timeout=b.DEFAULT_TIMEOUT)
+                time.sleep(gap)
+                second = unit.read_preset(0, timeout=b.DEFAULT_TIMEOUT)
+                ok = bool(first) and bool(second)
+            except Exception:
+                ok = False
+            if ok:
+                answered.append(gap)
+                print(
+                    f"\ngap sweep: gap {gap * 1000:.1f} ms answered "
+                    f"({len(first)} + {len(second)} words)"
+                )
+                continue
+            first_unanswered = gap
+            print(f"\ngap sweep: gap {gap * 1000:.1f} ms NOT answered")
+            break
+
+        largest = answered[-1] if answered else None
+        largest_ms = largest * 1000 if largest is not None else 0.0
+        first_ms = (
+            first_unanswered * 1000 if first_unanswered is not None else -1.0
+        )
+        print(
+            f"\ngap sweep: largest answered gap {largest_ms:.1f} ms; "
+            f"first unanswered {first_ms:.1f} ms. "
+            "PRESET_GAP (TODO 3) stays a guess until recorded."
         )
