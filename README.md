@@ -276,6 +276,8 @@ tags, notes, search, device info. Morpheus-specific:
   `text · 12 chars`. A filter (`/`) ignores the collapse and searches every
   parameter.
 
+A channel's selected preset is shown by name (`003 - Pad:BallHyvs`); `+`/`-` on a collapsed channel summary steps the preset, rolling into the next bank at a boundary (bank 1/preset 127 + → bank 2/preset 0); and `Enter` on the channel's Ch. Program or Ch. Bank cell opens a favourite-aware preset picker that sets both cells.
+
   `s` is the **store** -- sending the whole map to a location -- and is
   **arm-then-fire**: it asks for a location, says what it erases, and waits
   for a confirmation, and it is refused outright without a backup. What a

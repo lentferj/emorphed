@@ -343,6 +343,8 @@ edit buffer per kind which is erased by changing which object is current
   restore the backup, then store -- the store step is what is still unrun. It
   refuses without `--yes` and a TTY, and no agent runs it.
 
+* **Channel presets shown by name and stepped with `+`/`-`:** a channel's selected preset appears by name (`003 - Pad:BallHyvs`), and `+`/`-` on a summary steps the preset, rolling into the next bank at a boundary (bank 1/preset 127 + → bank 2/preset 0).
+
 **Bench-ready step (U6, store).** `tools/bench_midimap_write.py --store`
 now reads the stored map back (`bridge.read_midimap(location)`) after
 `bridge.send_midimap(location, words)` and compares it word-for-word; the
