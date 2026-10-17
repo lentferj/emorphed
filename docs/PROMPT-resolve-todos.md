@@ -38,8 +38,9 @@ shapes, never edit them.
 4. **The venv only.** Everything runs inside `.venv/` (`bin/python`,
    `bin/pytest`, `bin/ruff`, `bin/mypy`). vinsynlib 0.4.2 is installed; do
    not touch it.
-5. **No E-mu / MidiQuest / third-party names in the repo.** Fixtures and
-   docs use invented word pools (`emorphed/demo.py`). A format note
+5. **No E-mu / MidiQuest / third-party identity strings or patch names
+   in the repo.** Fixtures and docs use invented word pools
+   (`emorphed/demo.py`). A format note
    *describes* structure; it does not paste a bank's identity strings or a
    slot's name. `emu/data/catalog.json` is gitignored.
 6. **Line style:** ruff line length 79, GPL-2.0-or-later SPDX header on every
@@ -57,12 +58,12 @@ shapes, never edit them.
 |---|---|---|---|
 | 1 bank framing (674-byte frames) | `:78`, `:120-129` | open, bench-gated for *resolution* | harness only |
 | 2 card 320-vs-384 | `:153-167` | open, needs a card | harness only |
-| 3 `PRESET_GAP` is a guess | `:169-186` | open, one observation | harness only |
-| 6 midimap **store** unverified | `:226-316` | open, destructive | split (tests offline, proof bench) |
-| 7 MidiQuest `.sqs` unread | `:318-326` | open | **yes** (document + scope) |
-| ER-F1 `load_channel` bool | `:569-595` | open (stale — guard already in vinsynlib) | **yes** (ledger) |
+| 3 `PRESET_GAP` is a guess | `:179-209` | open, one observation | harness only |
+| 6 midimap **store** unverified | `:250-351` | open, destructive | split (tests offline, proof bench) |
+| 7 MidiQuest `.sqs` unread | `:352-385` | open | **yes** (document + scope) |
+| ER-F1 `load_channel` bool | `:615-642` | open (stale — guard already in vinsynlib) | **yes** (ledger) |
 | stale `RESOLUTION_NOTES` §22 line | `RESOLUTION_NOTES.md:623-625` | contradicting §22:515-536 | **yes** (ledger) |
-| edisyn observations | `TODO.md:537-548` | "worth doing" | **yes** (notes) |
+| edisyn observations | `TODO.md:504, :591-594` | "worth doing" | **yes** (notes) |
 | untracked `docs/PROMPT-emorphed-parity.md` | referenced `TODO.md:685` | untracked, stale in places | **yes** (commit + note) |
 
 **Nothing in this programme touches the hardware.** Items 1, 2, 3 and the

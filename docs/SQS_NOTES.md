@@ -71,8 +71,8 @@ them.
 
 ## Where this was observed
 
-- `~/Dokumente/SYNTHS/` (41 `.sqs` files across several instrument folders)
-  and `~/Dokumente/Sound Quest/` (a few more), read in place.
+- `~/Dokumente/SYNTHS/` (39 `.sqs` files across several instrument folders)
+  and `~/Dokumente/Sound Quest/` (2 more), 41 total, read in place.
 - These files are the user's own and are **not committed** to this
   repository. No sample, name or identity string is committed either.
 

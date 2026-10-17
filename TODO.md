@@ -235,8 +235,10 @@ keys, and a device screen.
 What is specific to this instrument: `r` reads **every name of a kind in
 one message**, which no sibling can do, and files the flat reply back
 across the regions it spans -- a short reply is reported as "no card
-fitted", which is what it means. Enter refuses hyperpresets and midimaps
-before sending, since no program change reaches a midimap at all. The
+fitted", which is what it means. Enter selects presets and hyperpresets;
+a midimap is made current over System Exclusive behind a confirmation (a
+Program Change reaches neither midimap nor -- per the 2026-10-16
+measurement -- is there a midimap bank). The
 slot pane shows the SysEx *index* beside the displayed number, and the
 status line says the program number it used is the one that works under
 the default Program Map. `d` sets the SysEx device ID, which this
@@ -729,5 +731,6 @@ task shipped.
 Deliberate divergences recorded in
 `docs/PROMPT-emorphed-parity.md` (parity contract): no category filter,
 no preset write path (midimap *parameters* are gated behind
-`--allow-write`; TODO item 6), no marked-list or screenshot capture,
-favourites stays on `F`.
+`--allow-write`; TODO item 6), no marked-list/paper-scan tool; the
+favourites view moved to `v` (family canonical is `F`); screenshots are
+captured by `tools/capture_screenshots.py`.

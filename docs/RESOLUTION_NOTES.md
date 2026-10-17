@@ -592,10 +592,11 @@ are checkable without reading edisyn again.
   store frame), and the existing `parameter_data` (0x03).
 * `emu/bridge.py` -- `read_midimap` (0x46 -> 0x47, 360 words; a short body
   refused with the no-card wording), `write_parameter` (range-validated)
-  and `read_parameter`. `read_parameter` re-reads the whole owning map
-  rather than a per-parameter read, because no per-parameter read is
-  documented in what we have: **one 730-byte reply per verification**, the
-  cost stated in its docstring. `send_midimap` is the store.
+  and `read_parameter`. `read_parameter` sends a Parameter Request (0x02)
+  for that one parameter and reads back one small frame, per the manual's
+  scratch-map sentence (p.232: "The scratch map is accessed by requesting
+  MASTER settings or individual parameter requests") -- not a 730-byte
+  dump. `send_midimap` is the store.
 * `emorphed/edit.py` -- the pure rules: `EditGate` (locked by default,
   `toggle`, `describe`, `refuse`), `EditLog`, and `MidimapEditor.allow`
   (range and enumeration refusal) and `finish`, which logs an edit **only

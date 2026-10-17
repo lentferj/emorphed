@@ -10,9 +10,10 @@
 
 """Preset backups: a read-only restore point for one preset.
 
-``emorphed`` has no write path (TODO item 6 keeps it parked), so there is
-no ``restore`` command and none is offered here. What this module does is
-the honest half of a backup that a read-only browser can do: capture a
+``restore`` is not offered because there is no restore command; the one
+write path (midimap parameters + store) keeps its own backup and
+read-back (see ``CLAUDE.md``, "Writing is fenced"). What this module does
+is the honest half of a backup that a read-only browser can do: capture a
 preset's own bytes from the unit, write them into the family's JSON
 envelope, and read them back. When writes arrive, the other half --
 sending those bytes back -- can be added on top of this without changing
