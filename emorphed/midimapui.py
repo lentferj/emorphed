@@ -7,11 +7,15 @@
 
 A modal over the browser: the unit's own parameter table, with the value
 under a cell cursor. Each of the sixteen channels is collapsed to a single
-summary row by default (program, bank, volume, pan, mix bus and how many
-switches are on) and expands on Enter to show its twenty parameters;
-Global/Effects rows are always expanded. A screen owns no worker and sends
-nothing on its own -- every change goes out through ``on_edit`` (or
-``on_name`` for the twelve-character name, which is one row here).
+summary row by default (its selected preset -- named when a catalog is
+plumbed in, otherwise just the program number -- then volume, pan, mix bus
+and how many switches are on) and expands on Enter to show its twenty
+parameters; Global/Effects rows are always expanded. A screen owns no
+worker and sends nothing on its own -- every change goes out through a
+callback: ``on_edit`` for a single word, ``on_name`` for the
+twelve-character name, ``on_channel`` for a channel's preset pair, and
+``on_pick`` to ask for a preset picker. ``name_for`` supplies the preset
+name to display (the catalog is the app's, not the screen's).
 """
 
 from __future__ import annotations
@@ -40,6 +44,20 @@ _ASCII_LAST = 128
 _CHANNEL_STRIDE = 20
 _CHANNEL_BASE = 12
 _GLOBAL_BASE = 332  # 12 + 16 * 20; boundaries in PARAMS
+
+
+def _channel_index(offset: int) -> int:
+    """The in-block index (0-19) of a channel-block offset, else ``-1``."""
+    if not _CHANNEL_BASE <= offset < _GLOBAL_BASE:
+        return -1
+    return (offset - _CHANNEL_BASE) % _CHANNEL_STRIDE
+
+
+def _channel_of_offset(offset: int) -> int:
+    """The channel (1-16) a channel-block offset belongs to."""
+    return (offset - _CHANNEL_BASE) // _CHANNEL_STRIDE + 1
+
+
 _FX_A_TYPE_OFFSET = 333
 _FX_A_PARM_FIRST = 334
 _FX_A_PARM_LAST = 343
@@ -92,6 +110,9 @@ class MidimapEditScreen(ModalScreen[None]):
         on_store: Callable[[], None] | None = None,
         *args: Any,
         on_name: Callable[[str], None] | None = None,
+        name_for: Callable[[int, int], str] | None = None,
+        on_channel: Callable[[int, int, int], None] | None = None,
+        on_pick: Callable[[int], None] | None = None,
         **kwargs: Any,
     ) -> None:
         # allow positional callbacks after params (legacy shim)
@@ -113,6 +134,9 @@ class MidimapEditScreen(ModalScreen[None]):
         self._on_undo = on_undo
         self._on_store = on_store
         self._on_name = on_name
+        self._name_for = name_for
+        self._on_channel = on_channel
+        self._on_pick = on_pick
         self._typing: str = ""
         self._typing_offset: int | None = None
         self._filter: str = ""
@@ -240,7 +264,23 @@ class MidimapEditScreen(ModalScreen[None]):
             return True
         return set(self._name_text()) <= {" ", "?"}
 
-    def _display_value(self, row: Any) -> str:  # noqa: C901
+    def _preset_text(self, bank: int, number: int) -> str:
+        """A preset as it reads: ``003 - Name``, or just ``003`` unnamed.
+
+        The bank and number are a channel's two words: ``Ch. Bank`` 0-4
+        and ``Ch. Program`` 0-127. The name is ``name_for``'s answer; an
+        empty (or absent) name means the slot has none, and the number
+        stands alone.
+        """
+        name = ""
+        if self._name_for is not None:
+            with contextlib.suppress(Exception):
+                name = self._name_for(bank, number) or ""
+        if name:
+            return f"{number:03d} - {name}"
+        return f"{number:03d}"
+
+    def _display_value(self, row: Any) -> str:  # noqa: C901, PLR0911
         if row == "name":
             if self._name_blank():
                 return "(empty)"
@@ -267,8 +307,9 @@ class MidimapEditScreen(ModalScreen[None]):
                 except Exception:
                     return str(_raw(off))
 
-            program_spell = _spell(base + 0)
-            bank_spell = _spell(base + 1)
+            program_value = _raw(base + 0)
+            bank_value = _raw(base + 1)
+            lead = self._preset_text(bank_value, program_value)
             volume_spell = _spell(base + 2)
             pan_spell = _spell(base + 3)
             bus_spell = _spell(base + 4)
@@ -278,12 +319,16 @@ class MidimapEditScreen(ModalScreen[None]):
                 if _raw(off) == 1:
                     switches += 1
             return (
-                f"prog {program_spell} · {bank_spell} · "
-                f"vol {volume_spell} · pan {pan_spell} · "
+                f"{lead} · vol {volume_spell} · pan {pan_spell} · "
                 f"bus {bus_spell} · {switches} switches on"
             )
         param = self._param_of(row)
         value = self._raw_value(row)
+        # A channel's Ch. Program word shows the preset it selects, the
+        # same text the collapsed summary leads with.
+        if _channel_index(int(row)) == 0:
+            bank = self._raw_value(int(row) + 1)
+            return self._preset_text(bank, value)
         try:
             return mm.spell(param, value) if param is not None else str(value)
         except Exception:
@@ -534,7 +579,13 @@ class MidimapEditScreen(ModalScreen[None]):
                             )
                     else:
                         with contextlib.suppress(Exception):
-                            spelled = self._spell(int(off), value)
+                            # A Ch. Program read-back shows the preset name,
+                            # like the row does, not the bare number.
+                            spelled = (
+                                self._display_value(int(off))
+                                if _channel_index(int(off)) == 0
+                                else self._spell(int(off), value)
+                            )
                             table.update_cell(row_key, "value", spelled)
                     # A collapsed channel's summary row must follow too.
                     if (
@@ -609,12 +660,37 @@ class MidimapEditScreen(ModalScreen[None]):
     def action_nudge_down(self) -> None:
         self._nudge(-1)
 
-    def _nudge(self, by: int) -> None:  # noqa: C901, PLR0912
+    def _nudge(self, by: int) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915
         row = self._current_row()
         if row is None:
             return
         if isinstance(row, str) and row.startswith("ch"):
-            self.say("the channel summary is expanded with enter")
+            try:
+                channel = int(row[2:])
+            except ValueError:
+                return
+            base = _CHANNEL_BASE + (channel - 1) * _CHANNEL_STRIDE
+            bank = self._raw_value(base + 1)
+            number = self._raw_value(base)
+            try:
+                new_bank, new_number = mm.step_channel_preset(bank, number, by)
+            except ValueError as exc:
+                self.say(str(exc), refused=True)
+                return
+            # The pair is optimistic: both words are painted now and the
+            # write itself belongs to on_channel (one exchange in the app).
+            self._pre_edit.setdefault(base, self._values.get(base, number))
+            self._pre_edit.setdefault(
+                base + 1, self._values.get(base + 1, bank)
+            )
+            self._values[base] = new_number
+            self._values[base + 1] = new_bank
+            if self._on_channel is not None:
+                self._on_channel(channel, new_bank, new_number)
+            column = self._cursor_column()
+            self._refresh_table()
+            self._move_to(row, column)
+            self._update_status()
             return
         if row == "name":
             self.say("the name is edited as text -- press enter")
@@ -708,6 +784,11 @@ class MidimapEditScreen(ModalScreen[None]):
             return
 
         off = int(row)
+        # A channel's Ch. Program / Ch. Bank row opens the preset picker
+        # (on_pick) instead of a prompt, when the app plumbed one in.
+        if _channel_index(off) in (0, 1) and self._on_pick is not None:
+            self._on_pick(_channel_of_offset(off))
+            return
         param = None
         try:
             param = mm.param_at(off)
