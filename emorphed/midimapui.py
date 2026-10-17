@@ -103,6 +103,7 @@ class MidimapEditScreen(ModalScreen[None]):
         super().__init__(**kwargs)
         self._editor = editor
         self._values: dict[int, int] = dict(params or {})
+        self._pre_edit: dict[int, int] = {}
         self._on_edit = on_edit
         self._on_re_read = on_re_read
         self._on_undo = on_undo
@@ -373,7 +374,7 @@ class MidimapEditScreen(ModalScreen[None]):
         prefix = "[b]refused[/b] · " if refused else ""
         status.update(prefix + message)
 
-    def result(
+    def result(  # noqa: C901
         self,
         ok: bool,
         message: str,
@@ -382,8 +383,8 @@ class MidimapEditScreen(ModalScreen[None]):
         offset: int | None = None,
         **_extra: Any,
     ) -> None:
+        off = parameter_id if parameter_id is not None else offset
         if ok:
-            off = parameter_id if parameter_id is not None else offset
             # Single-value update (usual case, scratch re-read path).
             if off is not None and value is not None:
                 self._values[off] = value
@@ -439,6 +440,12 @@ class MidimapEditScreen(ModalScreen[None]):
                 # keep filters/rows consistent without a full table rebuild
                 if "name" in self._all_rows and self._filter:
                     self._ordered = self._visible_rows()
+            if off is not None:
+                self._pre_edit.pop(off, None)
+        elif off is not None and off in self._pre_edit:
+            self._values[off] = self._pre_edit.pop(off)
+            self._refresh_table()
+            self._update_status()
         self.say(message, refused=not ok)
 
     def _report(self) -> str:
@@ -514,6 +521,7 @@ class MidimapEditScreen(ModalScreen[None]):
         if refusal is not None:
             self.say(refusal, refused=True)
             return
+        self._pre_edit.setdefault(off, self._values.get(off, value))
         self._values[off] = value
         if on_edit is not None:
             on_edit(off, value)
@@ -576,6 +584,7 @@ class MidimapEditScreen(ModalScreen[None]):
                 if refusal is not None:
                     self.say(refusal, refused=True)
                     return
+                self._pre_edit.setdefault(off, self._values.get(off, value))
                 self._values[off] = value
                 if self._on_edit is not None:
                     self._on_edit(off, value)
@@ -613,6 +622,7 @@ class MidimapEditScreen(ModalScreen[None]):
                 if refusal is not None:
                     self.say(refusal, refused=True)
                     return
+                self._pre_edit.setdefault(off, self._values.get(off, value))
                 self._values[off] = value
                 if self._on_edit is not None:
                     self._on_edit(off, value)

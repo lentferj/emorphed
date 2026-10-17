@@ -469,5 +469,28 @@ async def test_jump_keys_via_pilot() -> None:
         assert "Name" in _status(screen)
 
 
+@pytest.mark.asyncio
+async def test_refused_result_restores_optimistic_cell() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, {14: 5})
+        app.push_screen(screen)
+        await pilot.pause()
+        screen.action_nudge_up()
+        await pilot.pause()
+        painted = 6
+        assert screen._values[14] == painted
+        screen.result(
+            False,
+            "Ch. Volume did not take 6",
+            parameter_id=14,
+            value=6,
+        )
+        await pilot.pause()
+        restored = 5
+        assert screen._values[14] == restored
+
+
 if __name__ == "__main__":
     pass
