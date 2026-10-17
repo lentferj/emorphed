@@ -641,10 +641,14 @@ class EmorphedApp(App[None]):
                     if a != b
                 )
                 new_text = mm.name_of(new_words)
-                if getattr(self, "_current_midimap_words", None) is not None:
+                if (
+                    agreed
+                    and getattr(self, "_current_midimap_words", None)
+                    is not None
+                ):
                     for off in range(12):
                         self._current_midimap_words[off] = new_words[off]
-                if record:
+                if record and agreed:
                     self._push_change(NameChange(old_text, new_text))
         except _BRIDGE_ERRORS as exc:
             failure = exc
@@ -690,7 +694,9 @@ class EmorphedApp(App[None]):
                 top.say(msg)
         self.notify_status(msg)
 
-    def _apply_parameter(self, offset: int, value: int) -> None:
+    def _apply_parameter(
+        self, offset: int, value: int, *, record: bool = True
+    ) -> None:
         refusal = self._editor.allow(offset, value)
         if refusal is not None:
             self.notify_status(refusal, refused=True)
@@ -707,10 +713,12 @@ class EmorphedApp(App[None]):
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return
-        self._apply_parameter_worker(offset, value)
+        self._apply_parameter_worker(offset, value, record)
 
     @work(thread=True)
-    def _apply_parameter_worker(self, offset: int, value: int) -> None:
+    def _apply_parameter_worker(
+        self, offset: int, value: int, record: bool = True
+    ) -> None:
         """**MIDI only**: write, then read back."""
         failure = None
         old = None
@@ -727,7 +735,13 @@ class EmorphedApp(App[None]):
         finally:
             self._exchange.release()
         self.call_from_thread(
-            self._parameter_edited, offset, value, old, read_back, failure
+            self._parameter_edited,
+            offset,
+            value,
+            old,
+            read_back,
+            failure,
+            record=record,
         )
 
     def _backup_before_write(self) -> None:
@@ -760,13 +774,15 @@ class EmorphedApp(App[None]):
         # config maybe; keep None default under data dir
         return None
 
-    def _parameter_edited(
+    def _parameter_edited(  # noqa: PLR0913
         self,
         offset: int,
         value: int,
         old: int | None,
         read_back: int | None,
         failure: BaseException | None,
+        *,
+        record: bool = True,
     ) -> None:
         if failure is not None:
             sentence = f"offset {offset}: {failure}"
@@ -775,7 +791,7 @@ class EmorphedApp(App[None]):
             rb = read_back if read_back is not None else 0
             old_val = old if old is not None else value
             ok, sentence = self._editor.finish(offset, value, rb, old=old_val)
-            if ok:
+            if ok and record:
                 self._push_change(ParamChange(offset, old_val, value))
         self.notify_status(sentence, refused=not ok)
         top = self.screen
@@ -788,7 +804,7 @@ class EmorphedApp(App[None]):
         if ok and getattr(self, "_current_midimap_words", None) is not None:
             self._current_midimap_words[offset] = value
 
-    def _store_midimap(self) -> None:  # noqa: C901
+    def _store_midimap(self) -> None:
         if not self._midimap_backed_up:
             self.notify_status(
                 "store refused: no midimap backup this session", refused=True
@@ -809,11 +825,6 @@ class EmorphedApp(App[None]):
             _idx = 0 if _cm is None else _cm
         index = _idx
         words = list(getattr(self, "_current_midimap_words", []))
-        if not words:
-            try:
-                words = list(self.device.read_midimap(index))
-            except Exception:
-                words = []
 
         def answered(text: str | None) -> None:
             if not text:
@@ -832,7 +843,9 @@ class EmorphedApp(App[None]):
                 ConfirmScreen(
                     f"STORE to location {loc}: erases what is there"
                 ),
-                lambda confirmed: self._store_confirmed(loc, words, confirmed),
+                lambda confirmed: self._store_confirmed(
+                    loc, words, confirmed, index=index
+                ),
             )
 
         self.push_screen(
@@ -841,7 +854,12 @@ class EmorphedApp(App[None]):
         )
 
     def _store_confirmed(
-        self, loc: int, words: list[int], confirmed: bool | None
+        self,
+        loc: int,
+        words: list[int],
+        confirmed: bool | None,
+        *,
+        index: int | None = None,
     ) -> None:
         if not confirmed:
             return
@@ -851,14 +869,21 @@ class EmorphedApp(App[None]):
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return
-        self._store_midimap_worker(loc, words)
+        self._store_midimap_worker(loc, words, index=index)
 
     @work(thread=True)
-    def _store_midimap_worker(self, loc: int, words: list[int]) -> None:
+    def _store_midimap_worker(
+        self, loc: int, words: list[int], index: int | None = None
+    ) -> None:
         failure = None
         stored: list[int] | None = None
         try:
             with self._busy_gate:
+                if not words:
+                    try:
+                        words = list(self.device.read_midimap(index or 0))
+                    except Exception:
+                        words = []
                 self.device.send_midimap(loc, words)
                 stored = list(self.device.read_midimap(loc))
         except _BRIDGE_ERRORS as exc:
@@ -871,17 +896,23 @@ class EmorphedApp(App[None]):
             )
             return
         stored_list = stored if stored is not None else []
+        total = len(words)
+        if stored is None or total == 0 or len(stored_list) != total:
+            self.call_from_thread(
+                self.notify_status,
+                (
+                    f"store to M{loc:02d}: read-back was "
+                    f"{len(stored_list)} words, not {total}"
+                ),
+                refused=True,
+            )
+            return
         agreed = sum(
             1
             for sent, got in zip(words, stored_list, strict=False)
             if sent == got
         )
-        total = len(words)
-        full = (
-            stored is not None
-            and len(stored_list) == total
-            and agreed == total
-        )
+        full = agreed == total and total > 0
         if full:
             self.call_from_thread(
                 self.notify_status,
@@ -935,7 +966,7 @@ class EmorphedApp(App[None]):
                 self._undo_tag_note(change)
             elif isinstance(change, ParamChange):
                 params += 1
-                self._apply_parameter(change.offset, change.old)
+                self._apply_parameter(change.offset, change.old, record=False)
             elif isinstance(change, NameChange):
                 names += 1
                 self._apply_name_text(change.old_text)

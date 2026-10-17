@@ -799,61 +799,6 @@ class TestMidimapAppWriteGateAndStore:
             await pilot.pause()
             assert len(device.parameter_writes) == before + 1
 
-
-class TestStartupSaysWhereTheNamesCameFrom:
-    """The status line counted only the printed layer.
-
-    With the sidecar full (names read off the unit survive a restart) the
-    browser still said "no catalog" on every launch, and the scan offer came
-    back every time, because both looked at the printed layer alone.
-    """
-
-    async def test_live_names_are_not_reported_as_no_catalog(self) -> None:
-        catalog = cat.empty()
-        catalog.set_live_name("P-RAM", 0, "Invented Name")
-        app = EmorphedApp(DemoDevice(), catalog=catalog)
-        said = _capture(app)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-        messages = [message for message, _ in said]
-        assert not any("no catalog" in message for message in messages), (
-            messages
-        )
-        assert any("1 names read from the unit" in m for m in messages), (
-            messages
-        )
-
-    async def test_the_offer_stays_away_when_live_names_exist(self) -> None:
-        catalog = cat.empty()
-        catalog.set_live_name("P-RAM", 0, "Invented Name")
-        app = EmorphedApp(DemoDevice(), catalog=catalog, offer_scan=True)
-        pushed: list[Any] = []
-        original = app.push_screen
-
-        def record(screen: Any, *rest: Any, **kwargs: Any) -> Any:
-            pushed.append(type(screen).__name__)
-            return original(screen, *rest, **kwargs)
-
-        app.push_screen = record  # type: ignore[method-assign]
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            app._maybe_offer_scan()
-            await pilot.pause()
-        assert "ScanOfferScreen" not in pushed, pushed
-
-    async def test_both_layers_are_counted(self) -> None:
-        catalog = cat.Catalog([cat.Entry("P-ROM", 0, "Printed")])
-        catalog.set_live_name("P-RAM", 0, "Invented Name")
-        app = EmorphedApp(DemoDevice(), catalog=catalog)
-        said = _capture(app)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-        messages = [message for message, _ in said]
-        assert any(
-            "1 names from the catalog" in m and "1 read from the unit" in m
-            for m in messages
-        ), messages
-
     async def test_store_confirmed_runs_worker_and_records_one_send(
         self, app: "EmorphedApp", device: DemoDevice
     ) -> None:
@@ -969,6 +914,61 @@ class TestStartupSaysWhereTheNamesCameFrom:
             assert any("0-31" in msg for msg, _ in said), said
 
 
+class TestStartupSaysWhereTheNamesCameFrom:
+    """The status line counted only the printed layer.
+
+    With the sidecar full (names read off the unit survive a restart) the
+    browser still said "no catalog" on every launch, and the scan offer came
+    back every time, because both looked at the printed layer alone.
+    """
+
+    async def test_live_names_are_not_reported_as_no_catalog(self) -> None:
+        catalog = cat.empty()
+        catalog.set_live_name("P-RAM", 0, "Invented Name")
+        app = EmorphedApp(DemoDevice(), catalog=catalog)
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+        messages = [message for message, _ in said]
+        assert not any("no catalog" in message for message in messages), (
+            messages
+        )
+        assert any("1 names read from the unit" in m for m in messages), (
+            messages
+        )
+
+    async def test_the_offer_stays_away_when_live_names_exist(self) -> None:
+        catalog = cat.empty()
+        catalog.set_live_name("P-RAM", 0, "Invented Name")
+        app = EmorphedApp(DemoDevice(), catalog=catalog, offer_scan=True)
+        pushed: list[Any] = []
+        original = app.push_screen
+
+        def record(screen: Any, *rest: Any, **kwargs: Any) -> Any:
+            pushed.append(type(screen).__name__)
+            return original(screen, *rest, **kwargs)
+
+        app.push_screen = record  # type: ignore[method-assign]
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._maybe_offer_scan()
+            await pilot.pause()
+        assert "ScanOfferScreen" not in pushed, pushed
+
+    async def test_both_layers_are_counted(self) -> None:
+        catalog = cat.Catalog([cat.Entry("P-ROM", 0, "Printed")])
+        catalog.set_live_name("P-RAM", 0, "Invented Name")
+        app = EmorphedApp(DemoDevice(), catalog=catalog)
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+        messages = [message for message, _ in said]
+        assert any(
+            "1 names from the catalog" in m and "1 read from the unit" in m
+            for m in messages
+        ), messages
+
+
 class TestMidimapParamUndo:
     async def test_param_write_armed_then_z_restores_previous_value(
         self, app: "EmorphedApp", device: DemoDevice
@@ -1001,6 +1001,22 @@ class TestMidimapParamUndo:
             assert device.parameter_writes[-1][1] == 0
             assert device.read_parameter(param) == 0
             assert not any(refused for _, refused in said), said
+            assert app._changes == []
+
+            # a second undo writes nothing more and reports nothing to undo
+            said2 = _capture(app)
+            writes_before3 = len(device.parameter_writes)
+            app.action_undo()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) == writes_before3
+            assert any("nothing to undo" in m for m, _ in said2), said2
+
+            # z then Z does not re-apply the nudged value
+            app.action_undo_all()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert device.read_parameter(param) == 0
 
 
 class TestMidimapCurrentIndexAndScratch:
@@ -1158,6 +1174,38 @@ class TestMidimapNameWrite:
             await pilot.pause()
             assert len(device.parameter_writes) - writes_before == 0
             assert any("32-127" in m for m, _ in said)
+
+    async def test_name_write_readback_disagreement_records_nothing(
+        self,
+        app: "EmorphedApp",
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        app._gate.toggle()  # arm
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            words_before = list(app._current_midimap_words[:12])
+            original_read = device.read_parameter
+            calls = {"n": 0}
+
+            def fake(param_id: int) -> int:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    return 9999
+                return cast(int, original_read(param_id))
+
+            monkeypatch.setattr(device, "read_parameter", fake)
+            said = _capture(app)
+            app._apply_midimap_name("Hi there")
+            await _settle(app, pilot)
+            await pilot.pause()
+            messages = [m for m, _ in said]
+            assert any("disagreed" in m.lower() for m in messages), messages
+            assert app._changes == []
+            assert app._current_midimap_words[:12] == words_before
 
 
 class TestTheBrowserRemembersWhereItWas:
