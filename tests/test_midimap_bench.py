@@ -149,3 +149,14 @@ def test_movement_refuses_a_parameter_that_cannot_move() -> None:
     assert bench.movement(volume, 0, -1) == 1, "should step up at the bottom"
     assert bench.movement(volume, 5, 0) is None
     assert bench.BENIGN_OFFSETS == ("Ch. Volume", "Ch. Pan", "Ch. Mix Bus")
+
+
+def test_store_location_validation() -> None:
+    assert bench.store_location(0) == (0, None)
+    assert bench.store_location("31") == (31, None)
+    for bad in (99, -1, "nope", True):
+        loc, why = bench.store_location(bad)
+        assert loc is None
+        assert why is not None
+    assert "0-31" in (bench.store_location(99)[1] or "")
+    assert "not a number" in (bench.store_location("nope")[1] or "")

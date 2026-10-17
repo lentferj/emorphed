@@ -603,6 +603,24 @@ def count_agreeing_words(sent: Sequence[int], stored: Sequence[int]) -> int:
     return sum(1 for a, b in zip(sent, stored, strict=False) if a == b)
 
 
+def store_location(value: Any) -> tuple[int | None, str | None]:
+    """Validate a ``--store`` location: ``(0-31, None)`` or ``(None, why)``.
+
+    Pure -- no I/O, no device. The app's store prompt refuses a non-number
+    and a location outside 0-31 before anything is sent; the bench refuses
+    the same way, so no invented location reaches the wire.
+    """
+    if isinstance(value, bool):
+        return None, "store: not a number; refusing"
+    try:
+        loc = int(value)
+    except (TypeError, ValueError):
+        return None, "store: not a number; refusing"
+    if not 0 <= loc <= 31:
+        return None, "store: a midimap location is 0-31; refusing"
+    return loc, None
+
+
 def exit_code(
     agreed_write: bool,
     agreed_restore: bool,
@@ -670,7 +688,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
         default=None,
         metavar="LOCATION",
         help="after the write test, store the midimap to LOCATION "
-        "(destructive; needs --yes)",
+        "(destructive; needs --yes; it reads the stored map back and a "
+        "disagreement fails the run)",
     )
 
     args = parser.parse_args(argv)
@@ -735,6 +754,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
 
     agreed_write = agreed_restore = False
     store_attempted = False
+    store_requested = args.store is not None
     store_agreed: bool | None = None
     try:
         if getattr(bridge, "swept", False):
@@ -861,14 +881,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
 
         # Optional store.
         if args.store is not None:
-            location = int(args.store) if str(args.store).isdigit() else None
+            location, refusal = store_location(args.store)
             if location is None:
-                try:
-                    location = int(args.store)
-                except (TypeError, ValueError):
-                    location = None
-            if location is None:
-                print("store: not a number; refusing")
+                print(refusal or "store: not a number; refusing")
             elif not backup_succeeded:
                 print("store: refused -- no successful backup in this run")
             else:
@@ -899,21 +914,27 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
                     try:
                         bridge.send_midimap(location, list(words))
                         stored_back = list(bridge.read_midimap(location))
-                        agreed = count_agreeing_words(words, stored_back)
                         total = len(words)
-                        store_agreed = (
-                            len(stored_back) == total and agreed == total
-                        )
-                        if store_agreed:
+                        if len(stored_back) != total:
+                            store_agreed = False
                             print(
-                                f"stored to M{location:02d} (read back "
-                                f"{agreed}/{total} words agree)"
+                                f"store to M{location:02d}: read-back was "
+                                f"{len(stored_back)} words, not {total}"
                             )
                         else:
-                            print(
-                                f"store to M{location:02d}: read-back "
-                                f"disagreed ({agreed}/{total} words agree)"
-                            )
+                            agreed = count_agreeing_words(words, stored_back)
+                            store_agreed = agreed == total
+                            if store_agreed:
+                                print(
+                                    f"stored to M{location:02d} (read back "
+                                    f"{agreed}/{total} words agree)"
+                                )
+                            else:
+                                print(
+                                    f"store to M{location:02d}: read-back "
+                                    f"disagreed "
+                                    f"({agreed}/{total} words agree)"
+                                )
                     except Exception as exc:
                         store_agreed = False
                         print(f"store: failed: {exc}")
@@ -938,7 +959,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
         else:
             print("VERDICT: FAIL -- the store did not read back agreeing")
         return code
-    suffix = " (store read back and agreed)" if store_attempted else ""
+    if store_attempted:
+        suffix = " (store read back and agreed)"
+    elif store_requested:
+        suffix = " (store requested but not run)"
+    else:
+        suffix = ""
     print(
         "VERDICT: PASS -- written and restored, both read back and agreed"
         + suffix
