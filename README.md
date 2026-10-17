@@ -236,9 +236,9 @@ tags, notes, search, device info. Morpheus-specific:
   log, not a separate buffer.
 - **Editing a midimap.** `m` opens the current midimap's own parameters in a
   modal. The map's 360 words are grouped into its sections -- **Name**,
-  **Channel 1** … **Channel 16**, and **Global / Effects** -- and every row
-  shows its offset, its section, the parameter label, the value and the
-  allowed range. The status line shows the row counter, the section and the
+  **Channel 1** … **Channel 16**, and **Global / Effects** -- the `#`
+  column identifies each row (e.g. `ch1` for summary rows), with section,
+  the parameter label, the value and the allowed range. The status line shows the row counter, the section and the
   current parameter; `n`/`p` jump to the next/previous section, `h` to the
   Name row, `x` straight to Global / Effects, and `/` filters the visible rows
   by label. `⏎` opens the prompt the row kind deserves: a **named picker** for
@@ -266,6 +266,15 @@ tags, notes, search, device info. Morpheus-specific:
   typical latency, up to 360 × the short probe timeout in the worst case).
   That cost is why it is a deliberate keystroke and not a refresh after every
   edit; a parameter that stays silent keeps the value already on screen.
+
+  The centred modal shows **one summary row per channel** by default (e.g.
+  `prog 0 · RAM Presets · vol 100 · pan 0 · bus Main · 4 switches on`);
+  the twenty parameter rows for a channel appear when it is **expanded with
+  Enter**, and hide again on Enter. **`c` toggles all channels** open/closed.
+  Columns are now `# · section · parameter · value · allowed`. The name is one
+  row showing the quoted name (or `(empty)`); its allowed column reads
+  `text · 12 chars`. A filter (`/`) ignores the collapse and searches every
+  parameter.
 
   `s` is the **store** -- sending the whole map to a location -- and is
   **arm-then-fire**: it asks for a location, says what it erases, and waits

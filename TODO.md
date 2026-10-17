@@ -333,6 +333,10 @@ edit buffer per kind which is erased by changing which object is current
 * **The name write is twelve writes rather than one.** Renaming sends twelve
   parameter writes (one per character, offsets 0-11) and reads each back; a
   single documented name message would be one frame, if the manual offers one.
+* **The midimap editor shows one summary row per channel by default**
+  (shipped behaviour not open work): program · bank · volume · pan · mix bus ·
+  switches, which expands on Enter and collapses again; `c` toggles all channels
+  open/closed.
 * **The human-attended write bench** (`tools/bench_midimap_write.py`) proved
   the parameter-write path on 2026-10-16 (previous bullet). It does not cover
   the store: back up a midimap, change one benign parameter, read it back,

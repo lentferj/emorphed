@@ -144,6 +144,9 @@ each rule below is a rule, not a suggestion:
   hardware: the bench that proves it (`tools/bench_midimap_write.py`) refuses
   without `--yes` and a TTY, and no agent runs it. Develop and test
   synthetically (`--demo` opens no ports).
+- The midimap editor's rows are collapsed to one summary row per channel by
+  default; they expand on Enter and collapse again. `c` toggles all channels
+  open/closed.
 
 Preset writes remain **not offered** -- a preset is read, selected or backed
 up, never written -- and there is still no `restore` command.
