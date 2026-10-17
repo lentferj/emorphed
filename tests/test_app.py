@@ -1579,6 +1579,23 @@ class TestChannelPreset:
             assert len(device.parameter_writes) - before == 2
 
 
+class TestRefusalsAreVisible:
+    """A refusal is a red bar, not the same grey as a success (rxved)."""
+
+    async def test_a_refusal_marks_the_status_widget(
+        self, app: EmorphedApp
+    ) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            status = app.query_one("#status", Static)
+            app.notify_status("the write gate is locked", refused=True)
+            await pilot.pause()
+            assert status.has_class("refused")
+            app.notify_status("all good")
+            await pilot.pause()
+            assert not status.has_class("refused")
+
+
 class TestTheFooterFitsItsText:
     """The footer is a wrapped legend, not a fixed band.
 

@@ -77,6 +77,9 @@ class MidimapEditScreen(ModalScreen[None]):
     }
     MidimapEditScreen DataTable { height: 1fr; }
     MidimapEditScreen .status { height: auto; color: $text; padding-top: 1; }
+    MidimapEditScreen .status.refused {
+        background: $error; color: $text; text-style: bold;
+    }
     MidimapEditScreen .hints { height: auto; color: $text-muted; }
     """
 
@@ -532,8 +535,8 @@ class MidimapEditScreen(ModalScreen[None]):
             status = self.query_one(".status", Static)
         except Exception:
             return
-        prefix = "[b]refused[/b] · " if refused else ""
-        status.update(prefix + message)
+        status.update(message)
+        status.set_class(refused, "refused")
 
     def result(  # noqa: C901, PLR0912
         self,

@@ -243,6 +243,15 @@ class EmorphedApp(App[None]):
     DataTable { height: 1fr; }
     #detail { height: 3; padding: 0 1; border-top: solid $panel; }
     #status { height: 1; background: $boost; color: $text; padding: 0 1; }
+    /* The ID is repeated or the rule never paints: an ID selector outranks
+       a class, so a bare ``.refused`` was dead CSS and every refusal drew in
+       the same grey as a success. Red and bold, the sibling rxved's shape, so
+       a locked write gate is legible at a glance. */
+    #status.refused {
+        background: $error;
+        color: $text;
+        text-style: bold;
+    }
     """
 
     BINDINGS = [
@@ -1821,8 +1830,15 @@ class EmorphedApp(App[None]):
         )
 
     def notify_status(self, message: str, *, refused: bool = False) -> None:
-        prefix = "[b]refused[/b] · " if refused else ""
-        self.query_one("#status", Static).update(prefix + message)
+        """Say the last thing; a refusal goes red and bold.
+
+        The family's shape (rxved): the widget carries a ``refused`` class
+        rather than a text prefix, so a locked write gate is a red bar the
+        eye cannot miss instead of another grey status line.
+        """
+        status = self.query_one("#status", Static)
+        status.update(message)
+        status.set_class(refused, "refused")
 
     # --- navigation ---------------------------------------------------------
 

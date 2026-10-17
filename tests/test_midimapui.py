@@ -1182,6 +1182,23 @@ async def test_cursor_starts_on_the_first_column() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_refusal_marks_the_editor_status() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        status = screen.query_one(".status", Static)
+        screen.say("the write gate is locked", refused=True)
+        await pilot.pause()
+        assert status.has_class("refused")
+        screen.say("value 7")
+        await pilot.pause()
+        assert not status.has_class("refused")
+
+
+@pytest.mark.asyncio
 async def test_nudge_keeps_the_cursor_column() -> None:
     """+/- edits the row; it must not throw the cell cursor to column 0."""
     app = MiniApp()
