@@ -363,7 +363,10 @@ def load(
     """
     if kind is not None:
         block = BLOCK_MIDIMAP if kind == KIND_MIDIMAP else BLOCK
-        return _load_for(ident, directory=directory, kind=kind, block=block)
+        result = _load_for(ident, directory=directory, kind=kind, block=block)
+        if kind == KIND_MIDIMAP:
+            return MidimapBytes(result)
+        return result
     # No kind given: accept either of this family's own kinds.
     record = _backup.load(_resolve(ident, directory))
     if record.kind not in (KIND, KIND_MIDIMAP):

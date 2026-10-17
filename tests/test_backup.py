@@ -155,6 +155,104 @@ class TestTheEnvelope:
             bk.load(os.path.basename(path), directory=str(tmp_path))
 
 
+class TestTheMidimapEnvelope:
+    def test_a_real_midimap_round_trips(self, tmp_path) -> None:
+        device = DemoDevice()
+        words = list(range(360))
+        device.send_midimap(0, words)
+        stored = device.read_midimap(0)
+        record = bk.save_midimap(
+            stored,
+            device_id=device.device_id,
+            slot=INDEX,
+            directory=str(tmp_path),
+        )
+        assert record.kind == bk.KIND_MIDIMAP
+        assert record.slot == str(INDEX)
+        assert record.error is None
+
+        loaded = bk.load_midimap(record.id, directory=str(tmp_path))
+        assert list(loaded.words) == list(stored)
+        assert loaded == m.to_words(stored)
+        assert isinstance(loaded, bk.MidimapBytes)
+
+    def test_the_envelope_never_overwrites(self, tmp_path) -> None:
+        device = DemoDevice()
+        words = list(range(360))
+        device.send_midimap(0, words)
+        stored = device.read_midimap(0)
+        first = bk.save_midimap(
+            stored,
+            device_id=device.device_id,
+            slot=INDEX,
+            directory=str(tmp_path),
+        )
+        second = bk.save_midimap(
+            stored,
+            device_id=device.device_id,
+            slot=INDEX,
+            directory=str(tmp_path),
+        )
+        assert first.id != second.id
+        assert os.path.isfile(os.path.join(str(tmp_path), first.id))
+        assert os.path.isfile(os.path.join(str(tmp_path), second.id))
+        assert len(bk.list_backups(str(tmp_path))) == 2
+
+    def test_load_with_kind_midimap_returns_midimap_bytes(
+        self, tmp_path
+    ) -> None:
+        device = DemoDevice()
+        words = list(range(360))
+        device.send_midimap(0, words)
+        record = bk.save_midimap(
+            device.read_midimap(0),
+            device_id=device.device_id,
+            slot=INDEX,
+            directory=str(tmp_path),
+        )
+        loaded = bk.load(record.id, directory=str(tmp_path), kind="midimap")
+        assert isinstance(loaded, bk.MidimapBytes)
+
+    def test_load_refuses_a_preset_asked_for_as_midimap(
+        self, tmp_path
+    ) -> None:
+        device = DemoDevice()
+        record = bk.save_preset(
+            device.read_preset(INDEX),
+            device_id=device.device_id,
+            slot=INDEX,
+            directory=str(tmp_path),
+        )
+        with pytest.raises(ValueError, match="not a midimap backup"):
+            bk.load(record.id, directory=str(tmp_path), kind="midimap")
+
+    def test_load_midimap_refuses_a_preset_kind(self, tmp_path) -> None:
+        path = vbk.save(
+            str(tmp_path),
+            kind=bk.KIND,
+            slot=str(INDEX),
+            name="Not A Midimap",
+            device_id="0",
+            source="test",
+            blocks={bk.BLOCK: b"\xf0\xf7"},
+        )
+        with pytest.raises(ValueError, match="not a midimap backup"):
+            bk.load_midimap(os.path.basename(path), directory=str(tmp_path))
+
+    def test_load_midimap_refuses_an_empty_block(self, tmp_path) -> None:
+        path = vbk.save(
+            str(tmp_path),
+            kind=bk.KIND_MIDIMAP,
+            slot=str(INDEX),
+            name="Empty",
+            device_id="0",
+            source="test",
+            blocks={},
+        )
+        with pytest.raises(ValueError, match="no midimap block"):
+            bk.load_midimap(os.path.basename(path), directory=str(tmp_path))
+
+
 class TestTheCliBackupCommands:
     def test_list_needs_no_unit(self, monkeypatch, capsys, tmp_path) -> None:
         def explode(*args, **kwargs):
