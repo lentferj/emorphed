@@ -35,6 +35,12 @@ question (TODO 9) is listed here as a manual bench step only; this suite
 prints which card regions emorphed's map knows about and stops, because
 selecting would make the unit play.
 
+`TestHardwareStore` is the one deliberate exception to the read-only rule
+(TODO item 6): a human-run bench step that changes one benign parameter of
+midimap 0, stores it, restores the original and stores again -- the STORE
+(half) no other test may exercise. It prints the location and the
+before/after for the operator's power-cycle check.
+
 The bank request test (U4) writes one full frame per distinct frame length
 to the directory named by ``EMORPHED_BANK_CAPTURE`` (default
 ``/tmp/opencode``) as raw ``.syx`` bytes, so the 674-byte framing question
@@ -54,6 +60,7 @@ import pytest
 from emu import banks
 from emu import bridge as b
 from emu import messages as m
+from emu import midimap as mm
 
 #: A streamed list reply: 3.7 s measured for 128 preset names
 #: (5000 B) at MIDI DIN speed; the 2.0 s request timeout was the
@@ -424,4 +431,114 @@ class TestHardwareTiming:
             f"\ngap sweep: largest answered gap {largest_ms:.1f} ms; "
             f"first unanswered {first_ms:.1f} ms. "
             "PRESET_GAP (TODO 3) stays a guess until recorded."
+        )
+
+
+class TestHardwareStore:
+    """The STORE half (TODO item 6): a Midimap Data frame to a location.
+
+    **Opt-in, human-run.** Like everything here it needs ``--hardware``;
+    unlike every other test in this file it also *writes* midimap words
+    to the unit. It is the bench step for the store -- the destructive
+    one, the one CLAUDE.md fences -- and no agent runs it.
+
+    The flow, in the editor's own order: read midimap 0 (the stored
+    dump), change one **benign** parameter (the first name character --
+    nothing audible answers to it), send the changed map back to that
+    same location, read the stored dump again, and stop there if
+    ``EMORPHED_STORE_KEEP`` is set -- otherwise restore the original
+    words and store them back.
+
+    **Asserted only what the manual guarantees** (p.233): a Midimap Data
+    frame sent to a location is what that location reads back. That the
+    word survives a power cycle is the *observation* this step exists to
+    record -- no process can assert it -- so the location, the offset and
+    the before/after are printed for the operator: power-cycle the unit,
+    then re-read midimap 0 and compare the printed word.
+    """
+
+    #: The location read, changed and put back: 0 is RAM, and the test
+    #: holds its original words, so the restore can be exact.
+    LOCATION = 0
+    #: The offset changed: the midimap name's first ASCII character,
+    #: params 2048-2059. Benign by construction.
+    CHANGE_OFFSET = 0
+
+    def test_a_stored_dump_reads_back_the_words_that_were_sent(
+        self, unit: b.MorpheusBridge
+    ) -> None:
+        location = self.LOCATION
+        offset = self.CHANGE_OFFSET
+        param = mm.PARAM_BASE + offset
+
+        original = unit.read_midimap(location)
+        assert len(original) == 360  # noqa: PLR2004
+        before = original[offset]
+        # A different printable word than the one already there: contract
+        # is a change, not a particular character.
+        first_word, second_word = 0x41, 0x42
+        replacement = first_word if before != first_word else second_word
+        edited = list(original)
+        edited[offset] = replacement
+
+        # The editor's order: a parameter write first -- that edit is the
+        # unit's scratch map (manual p.232) -- then the store, whose
+        # frame carries all 360 words including the change.
+        unit.write_parameter(param, replacement)
+        time.sleep(b.DEFAULT_TIMEOUT)
+        unit.send_midimap(location, edited)
+        time.sleep(b.DEFAULT_TIMEOUT)
+        stored = unit.read_midimap(location)
+        assert stored == edited, (
+            f"midimap {location}: stored dump disagrees with the frame "
+            f"sent -- word {offset} sent {replacement}, read "
+            f"{stored[offset]}"
+        )
+
+        print(
+            f"\nstore: midimap {location} read ({len(original)} words); "
+            f"offset {offset} (param {param}) was {before}"
+        )
+        print(
+            f"store: parameter write {param} = {replacement} (scratch), "
+            f"then stored all 360 words to midimap {location}"
+        )
+        print(
+            "store: stored dump read back equal to the frame sent "
+            "(360/360 words, what manual p.233 guarantees)"
+        )
+
+        if os.environ.get("EMORPHED_STORE_KEEP"):
+            print(
+                f"store: EMORPHED_STORE_KEEP set -- midimap {location} "
+                f"keeps offset {offset} = {replacement}. POWER-CYCLE "
+                "CHECK: power-cycle the unit, read midimap "
+                f"{location} again, and word {offset} should still be "
+                f"{replacement}. Restore afterwards: store the original "
+                "words back (this test's default path does that)."
+            )
+            pytest.skip(
+                "EMORPHED_STORE_KEEP set: the changed words stay stored "
+                "for a human power-cycle check; recovery is re-running "
+                "this test unset"
+            )
+
+        # Restore the original and store it back, so leaving the bench
+        # leaves the map as it was found.
+        unit.write_parameter(param, before)
+        time.sleep(b.DEFAULT_TIMEOUT)
+        unit.send_midimap(location, original)
+        time.sleep(b.DEFAULT_TIMEOUT)
+        restored = unit.read_midimap(location)
+        assert restored == original, (
+            f"midimap {location}: restore did not read back as the "
+            f"original -- word {offset} was {before}, read "
+            f"{restored[offset]}"
+        )
+        print(
+            f"store: original restored (offset {offset} = {before}) and "
+            f"stored back to midimap {location}; the stored dump read "
+            "back equal to it. POWER-CYCLE CHECK: power-cycle now and "
+            f"read midimap {location} -- word {offset} should still be "
+            f"{before}, which is the persistence an earlier store showed."
         )

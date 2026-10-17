@@ -92,7 +92,9 @@ This is the fact that shapes everything:
 - **The hardware suite stays read-only.** Its vocabulary is information
   requests, name requests, data reads, and the Bank Select / Program Change
   pair from `select_messages`. `select` is the only sound-maker and the
-  hardware suite does not select.
+  hardware suite does not select. The one write exception is
+  `TestHardwareStore` (TODO item 6): a human-run bench step that stores
+  midimap 0 to itself and puts it back -- no agent runs it.
 - **Only one session drives a unit at a time.** Develop and test
   synthetically: `--demo` constructs no bridge and opens no ports.
 - **`PRESET_GAP` is a guess** and is labelled as one. Do not quote it as a
@@ -124,7 +126,9 @@ each rule below is a rule, not a suggestion:
   midimap: the value it is using right now, live, not permanent. Only a
   **store** makes an edit part of a stored location, and loading a stored map
   into the current location reloads the scratch map from it. Never describe a
-  parameter write as saved. The editor's `r` re-reads the **scratch**, not the
+  parameter write as saved. **A scratch edit is lost on a power cycle until
+  it is stored** -- the editor carries an unstored marker until a store
+  lands (manual p.233). The editor's `r` re-reads the **scratch**, not the
   stored dump, because that is where a write lands: the manual's sentence
   (p.232) is "The scratch map is accessed by requesting MASTER settings or
   individual parameter requests," and there is no scratch *dump* message, so a

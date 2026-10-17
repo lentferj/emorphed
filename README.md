@@ -280,9 +280,16 @@ A channel's selected preset is shown by name (`003 - Pad:BallHyvs`); `+`/`-` on 
 
   `s` is the **store** -- sending the whole map to a location -- and is
   **arm-then-fire**: it asks for a location, says what it erases, and waits
-  for a confirmation, and it is refused outright without a backup. What a
-  parameter write changes is the unit's *scratch* midimap, live; only a store
-  makes it permanent.
+  for a confirmation, and it is refused outright without a backup.
+
+  The editor says the distinction in its own footer and status:
+  `s store to a location (survives a power cycle)`. What a parameter write
+  changes is the unit's *scratch* midimap, live, and **a scratch edit is
+  lost on a power cycle** -- after any edit the editor's title carries an
+  **unstored** marker and its status line repeats the sentence, until a
+  store lands. The store *is* the Midimap Data frame (manual p.233): "If
+  map is sent to current selected location, the scratch map will be loaded
+  from the newly stored map. Midimap numbers: 0-15 RAM, 16-31 CARD".
 - **Live names kept between sessions.** Names read off the unit go into
   `live-names.json` beside the favourites database, so the browser opens on
   your patches rather than the factory list. Override the path with

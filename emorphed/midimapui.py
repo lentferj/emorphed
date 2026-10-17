@@ -16,6 +16,9 @@ callback: ``on_edit`` for a single word, ``on_name`` for the
 twelve-character name, ``on_channel`` for a channel's preset pair, and
 ``on_pick`` to ask for a preset picker. ``name_for`` supplies the preset
 name to display (the catalog is the app's, not the screen's).
+``set_unstored`` is the screen's own scratch/stored marker: the app calls
+it after a write (``True``) and after a store (``False``), and the screen
+only displays the tag -- it sends nothing.
 """
 
 from __future__ import annotations
@@ -94,7 +97,7 @@ class MidimapEditScreen(ModalScreen[None]):
         Binding("z", "undo", "Undo"),
         Binding("Z", "undo_all", "Undo all"),
         Binding("r", "re_read", "Re-read"),
-        Binding("s", "store", "Store"),
+        Binding("s", "store", "Store to a location"),
         Binding("h", "go_name", "Name"),
         Binding("x", "go_effects", "Effects"),
         Binding("n", "next_section", "Next section"),
@@ -144,6 +147,7 @@ class MidimapEditScreen(ModalScreen[None]):
         self._typing_offset: int | None = None
         self._filter: str = ""
         self._expanded: set[int] = set()
+        self._unstored: bool = False
         self._build_rows()
         self._ordered: list[Any] = self._visible_rows()
 
@@ -495,11 +499,16 @@ class MidimapEditScreen(ModalScreen[None]):
             rng = f"{param.low}-{param.high}" if param is not None else "?"
             with contextlib.suppress(Exception):
                 value = self._values.get(off, getattr(param, "low", value))
+        tail = ""
+        if self._unstored:
+            tail = (
+                " · unstored -- s store to a location (survives a power cycle)"
+            )
         try:
             status = self.query_one(".status", Static)
             status.update(
                 f"row {index + 1}/{total} · {section} · "
-                f"{label} {rng} (now {value})"
+                f"{label} {rng} (now {value}){tail}"
             )
         except Exception:  # noqa: S110
             pass
@@ -508,7 +517,7 @@ class MidimapEditScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label("[b]Midimap edit[/b]")
+            yield Label("[b]Midimap edit[/b]", id="midimap-title")
             yield DataTable(
                 id="midimap-table", cursor_type="cell", zebra_stripes=True
             )
@@ -516,7 +525,8 @@ class MidimapEditScreen(ModalScreen[None]):
             yield Static(
                 "[dim]enter value · / filter · n / p section · c channels · "
                 "x effects · h name · w gate · + / - nudge · digits type · "
-                "r re-read · s store · z / Z undo · esc / q close[/dim]",
+                "r re-read · s store to a location (survives a power "
+                "cycle) · z / Z undo · esc / q close[/dim]",
                 classes="hints",
             )
 
@@ -527,6 +537,7 @@ class MidimapEditScreen(ModalScreen[None]):
         table.add_column("parameter", key="parameter")
         table.add_column("value", key="value")
         table.add_column("allowed", key="allowed")
+        self._refresh_title()
         self._refresh_table()
         self._update_status()
 
@@ -537,6 +548,30 @@ class MidimapEditScreen(ModalScreen[None]):
             return
         status.update(message)
         status.set_class(refused, "refused")
+
+    def set_unstored(self, unstored: bool = True) -> None:
+        """Mark the map on screen as edited scratch (or stored again).
+
+        The app calls this after a write (``True``) and after a store
+        (``False``): a parameter write edits the unit's **scratch** map,
+        and only a Midimap Data frame to a location survives a power
+        cycle (the store, manual p.233). The marker is this screen's own
+        state and display only -- the title carries the tag and the
+        status line names what ``s`` does -- while the screen still
+        sends nothing.
+        """
+        self._unstored = unstored
+        self._refresh_title()
+
+    def _refresh_title(self) -> None:
+        try:
+            title = self.query_one("#midimap-title", Label)
+        except Exception:
+            return
+        if self._unstored:
+            title.update("[b]Midimap edit[/b] -- scratch, unstored")
+        else:
+            title.update("[b]Midimap edit[/b]")
 
     def result(  # noqa: C901, PLR0912
         self,

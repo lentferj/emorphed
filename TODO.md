@@ -355,6 +355,18 @@ TTY and `--yes`, the location is still retyped, and the tool still refuses
 human-attended (TTY required) and record the observation. **Bench-ready;
 run by a human.**
 
+**Two doors into the store.** The editor's own retail store (`s` -- it says
+`s store to a location (survives a power cycle)` in the footer and status,
+and marks the map **unstored** until a store lands, because the parameter
+writes alone are only ever scratch) and `TestHardwareStore` in
+`tests/test_hardware.py --hardware` -- a human-run bench step that changes
+one benign parameter (the first name character, offsets 2048-2059), stores
+midimap 0 to itself, reads the stored dump back and restores it, printing
+the before/after and location for a power-cycle check (`EMORPHED_STORE_KEEP`
+holds the changed words instead). Both ride `bridge.send_midimap`, so one
+bench result speaks for both; until it is run, the store stays labelled
+unproven.
+
 ## 7. The MidiQuest `.sqs` container is documented; the body is not
 
 **Status:** open — container documented in `docs/SQS_NOTES.md`; the

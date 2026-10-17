@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Label, Static
 
 from emorphed.edit import EditGate, MidimapEditor
 from emorphed.midimapui import MidimapEditScreen
@@ -1251,6 +1251,87 @@ async def test_the_modal_scales_with_the_terminal_width() -> None:
             widths[terminal_width] = screen.query_one(Vertical).size.width
     assert widths[80] < 80  # noqa: PLR2004
     assert widths[140] > 120  # noqa: PLR2004
+
+
+# ---- S2: the screen shows the scratch/stored state, and says what s does
+
+
+@pytest.mark.asyncio
+async def test_set_unstored_marks_the_title_and_the_status() -> None:
+    """After a write the title carries the marker; after a store, not."""
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        title = str(screen.query_one("#midimap-title", Label).content)
+        assert "unstored" not in title
+        assert "unstored" not in _status(screen)
+
+        screen.set_unstored()
+        await pilot.pause()
+        title = str(screen.query_one("#midimap-title", Label).content)
+        assert "unstored" in title
+        # the next status refresh (any cursor movement) names what s does
+        # while the map is unstored; set_unstored itself never clobbers a
+        # message the app has just said
+        screen._update_status()
+        await pilot.pause()
+        assert "s store to a location" in _status(screen)
+        assert "(survives a power cycle)" in _status(screen)
+
+        screen.set_unstored(False)
+        await pilot.pause()
+        title = str(screen.query_one("#midimap-title", Label).content)
+        assert "unstored" not in title
+        screen._update_status()
+        await pilot.pause()
+        assert "unstored" not in _status(screen)
+
+
+@pytest.mark.asyncio
+async def test_set_unstored_sends_nothing() -> None:
+    """The marker is display only: no callback fires when it is set."""
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        edits: list[tuple[int, int]] = []
+        stores: list[bool] = []
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(
+            editor,
+            _full_params(),
+            on_edit=lambda o, v: edits.append((o, v)),
+            on_store=lambda: stores.append(True),
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+        screen.set_unstored()
+        await pilot.pause()
+        screen.set_unstored(False)
+        await pilot.pause()
+        assert edits == []
+        assert stores == []
+
+
+@pytest.mark.asyncio
+async def test_footer_hint_names_what_the_store_key_does() -> None:
+    """`s store to a location (survives a power cycle)`, and no markup."""
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params())
+        app.push_screen(screen)
+        await pilot.pause()
+        hints = str(screen.query_one(".hints", Static).content)
+        assert "s store to a location" in hints
+        assert "(survives a power cycle)" in hints
+        assert "[b]refused[/b]" not in hints
+        # and a refusal is coloured by the class, not by literal markup
+        screen.say("no midimap backup this session", refused=True)
+        await pilot.pause()
+        assert "[b]refused[/b]" not in _status(screen)
+        assert screen.query_one(".status", Static).has_class("refused")
 
 
 if __name__ == "__main__":
