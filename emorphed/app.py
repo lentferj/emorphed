@@ -315,6 +315,8 @@ class EmorphedApp(App[None]):
         #: Everything ``z`` can reverse, in the order it happened. Made
         #: first in ``__init__`` because a watcher can fire before the
         #: constructor has finished -- the undo log has to be there first.
+        self._busy_gate = BusyGate()
+        self._exchange = threading.Lock()
         self._undo_log = UndoLog(gate_hook=self._undo_gate)
         self.device = device
         self.catalog = catalog if catalog is not None else cat.empty()
@@ -362,7 +364,6 @@ class EmorphedApp(App[None]):
         #: Busy gate replaces the old ``_busy`` flag / RLock pair. Thread-safe:
         #: the gate refuses on the main thread before a worker is spawned and
         #: tracks the exchange's in-progress state for an idle close.
-        self._busy_gate = BusyGate()
         #: One exchange at a time, claimed on the main thread. The main
         #: thread takes it (non-blocking) before it spawns the worker and
         #: the worker always releases it in a ``finally``. The gate alone
@@ -370,7 +371,6 @@ class EmorphedApp(App[None]):
         #: between reserving one and entering it for real a second action
         #: would find neither ``check()`` nor ``is_busy()`` set and start a
         #: second worker. ``_busy`` reads this claim as a third signal.
-        self._exchange = threading.Lock()
         self._filling = False
         # Load persisted rating filter from ui-state.
         self.rating_filter: RatingFilter | None = None
@@ -461,10 +461,12 @@ class EmorphedApp(App[None]):
 
     @property
     def _busy(self) -> bool:
+        gate = getattr(self, "_busy_gate", None)
+        exchange = getattr(self, "_exchange", None)
         return (
-            self._busy_gate.check() is not None
-            or self._busy_gate.is_busy()
-            or self._exchange.locked()
+            (gate.check() is not None if gate else False)
+            or (gate.is_busy() if gate else False)
+            or (exchange.locked() if exchange else False)
         )
 
     def action_toggle_write_gate(self) -> None:
