@@ -2490,7 +2490,7 @@ class EmorphedApp(App[None]):
     def _adopt_kind_quiet(self, kind: str, names: list[str]) -> None:
         self._adopt_kind(kind, names, quiet=True)
 
-    def _adopt_kind(  # noqa: C901
+    def _adopt_kind(  # noqa: C901, PLR0912
         self, kind: str, names: list[str], *, quiet: bool = False
     ) -> None:
         """File a flat list of names back into the regions it spans.
@@ -2535,7 +2535,11 @@ class EmorphedApp(App[None]):
             except Exception:
                 # The cache is best-effort.
                 _ = None
-        self._fill(self._current_bank)
+        if quiet:
+            # Preserve cursor position during background verification
+            self._refill_keeping_place()
+        else:
+            self._fill(self._current_bank)
         short = ""
         expected = sum(r.count for r in banks.regions(kind))
         if adopted < expected:
