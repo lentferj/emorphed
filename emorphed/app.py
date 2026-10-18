@@ -590,6 +590,8 @@ class EmorphedApp(App[None]):
             ui_kwargs["on_channel"] = self._apply_channel_preset
         if "on_pick" in sig:
             ui_kwargs["on_pick"] = self._open_preset_picker
+        if "on_reset" in sig:
+            ui_kwargs["on_reset"] = self._reset_midimap_to_default
 
         screen = MidimapEditScreen(editor, params, **ui_kwargs)
         self._edit_screen = screen
@@ -1241,6 +1243,133 @@ class EmorphedApp(App[None]):
                 top.say(sentence, refused=refused)
         if not refused:
             self._mark_midimap_unstored(False)
+
+    def _reset_midimap_to_default(self) -> None:
+        """Reset the open midimap to the factory default (``-defMIDIMap-``).
+
+        The manual's Save Midimap screen names the default at ``M00``
+        (p.35): a reset stores that map over the current location. It is a
+        store, so it is fenced the same way -- a backup first, a
+        confirmation that says what is erased, and a read-back.
+        """
+        _idx = getattr(self, "_current_midimap_index", None)
+        if _idx is None:
+            _cm = getattr(self.device, "current_midimap", None)
+            _idx = 0 if _cm is None else _cm
+        index = _idx
+
+        def answered(confirmed: bool | None) -> None:
+            if not confirmed:
+                return
+            if self._busy:
+                self.notify_status("busy", refused=True)
+                return
+            if not self._exchange.acquire(blocking=False):
+                self.notify_status("busy", refused=True)
+                return
+            self._reset_midimap_worker(index)
+
+        self.push_screen(
+            ConfirmScreen(
+                f"reset M{index:02d} to the default midimap "
+                f"(-defMIDIMap-, M00)? this erases the map there"
+            ),
+            answered,
+        )
+
+    @work(thread=True)
+    def _reset_midimap_worker(self, index: int) -> None:
+        """**MIDI only** -- back up, read the M00 default, store it."""
+        failure: BaseException | None = None
+        backup_failed: BaseException | None = None
+        default: list[int] = []
+        stored: list[int] | None = None
+        try:
+            with self._busy_gate:
+                # Back up what is about to be overwritten first: a store
+                # without a successful backup is not offered (the fence).
+                current = list(self.device.read_midimap(index))
+                try:
+                    bkmod.save_midimap(
+                        current,
+                        device_id=self.device.device_id,
+                        slot=index,
+                        directory=self._backup_dir(),
+                        source="emorphed (midimap reset)",
+                    )
+                except Exception as exc:
+                    backup_failed = exc
+                else:
+                    self._midimap_backed_up = True
+                    default = list(self.device.read_midimap(0))  # M00
+                    self.device.send_midimap(index, default)
+                    stored = list(self.device.read_midimap(index))
+        except _BRIDGE_ERRORS as exc:
+            failure = exc
+        finally:
+            self._exchange.release()
+        self.call_from_thread(
+            self._finish_reset,
+            index,
+            default,
+            stored,
+            failure,
+            backup_failed,
+        )
+
+    def _finish_reset(
+        self,
+        index: int,
+        default: list[int],
+        stored: list[int] | None,
+        failure: BaseException | None,
+        backup_failed: BaseException | None,
+    ) -> None:
+        top = getattr(self, "_edit_screen", None)
+        if top is None:
+            top = self.screen
+        refused = True
+        if failure is not None:
+            sentence = f"reset: {failure}"
+        elif backup_failed is not None:
+            sentence = (
+                f"reset refused: could not back up the midimap: "
+                f"{backup_failed}"
+            )
+        elif stored is None or not default or len(stored) != len(default):
+            sentence = (
+                f"reset M{index:02d}: read-back was "
+                f"{0 if stored is None else len(stored)} words, not "
+                f"{len(default)}"
+            )
+        else:
+            agreed = sum(
+                1 for a, b in zip(default, stored, strict=False) if a == b
+            )
+            if agreed == len(default):
+                refused = False
+                self._current_midimap_words = list(default)
+                self._midimap_unstored = False
+                if top is not None and hasattr(top, "update_params"):
+                    params = {off: default[off] for off in range(len(default))}
+                    with contextlib.suppress(Exception):
+                        top.update_params(params)
+                if top is not None and hasattr(top, "set_unstored"):
+                    with contextlib.suppress(Exception):
+                        top.set_unstored(False)
+                sentence = (
+                    f"reset M{index:02d} to the default midimap "
+                    f"(read back {agreed}/{len(default)} words agree)"
+                )
+            else:
+                sentence = (
+                    f"reset M{index:02d}: read-back disagreed "
+                    f"({agreed}/{len(default)} words agree)"
+                )
+        self.notify_status(sentence, refused=refused)
+        if top is not None and hasattr(top, "say"):
+            with contextlib.suppress(Exception):
+                top.say(sentence, refused=refused)
 
     def action_undo(self) -> None:
         self._undo_master_edits(1)

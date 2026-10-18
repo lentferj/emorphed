@@ -293,6 +293,9 @@ A channel's selected preset is shown by name (`003 - Pad:BallHyvs`); `+`/`-` on 
   *is* the Midimap Data frame (manual p.233): "If
   map is sent to current selected location, the scratch map will be loaded
   from the newly stored map. Midimap numbers: 0-15 RAM, 16-31 CARD".
+  **`del` resets** the open map to the factory default (`-defMIDIMap-`,
+  which lives at RAM `M00` -- manual p.35) by storing it over the current
+  location, behind a confirmation and a backup.
 - **Live names kept between sessions.** Names read off the unit go into
   `live-names.json` beside the favourites database, so the browser opens on
   your patches rather than the factory list. Override the path with

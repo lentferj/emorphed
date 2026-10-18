@@ -122,7 +122,9 @@ each rule below is a rule, not a suggestion:
   p.36). `s` opens a browser of the midimaps -- RAM 0-15 and card 16-31, by
   name -- and goes **arm-then-fire** from the chosen location: say what is
   erased, wait for a confirmation. It is refused outright without a
-  successful backup this session.
+  successful backup this session. **`del` in the editor is the same store**
+  aimed at the open location, carrying the factory default (`-defMIDIMap-`,
+  at M00 -- manual p.35): back up, confirm, store, read back.
 - **Scratch versus stored.** A parameter write edits the unit's **scratch**
   midimap: the value it is using right now, live, not permanent. Only a
   **store** makes an edit part of a stored location, and loading a stored map

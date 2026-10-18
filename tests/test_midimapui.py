@@ -1345,5 +1345,22 @@ async def test_footer_hint_names_what_the_store_key_does() -> None:
         assert screen.query_one(".status", Static).has_class("refused")
 
 
+@pytest.mark.asyncio
+async def test_del_asks_the_app_to_reset_the_map() -> None:
+    """``DEL`` resets to the default; the screen only asks (sends nothing)."""
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        calls: list[bool] = []
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(
+            editor, _full_params(), on_reset=lambda: calls.append(True)
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+        await pilot.press("delete")
+        await pilot.pause()
+        assert calls == [True]
+
+
 if __name__ == "__main__":
     pass

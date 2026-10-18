@@ -103,6 +103,7 @@ class MidimapEditScreen(ModalScreen[None]):
         Binding("n", "next_section", "Next section"),
         Binding("p", "prev_section", "Prev section"),
         Binding("c", "toggle_all_channels", "Collapse/expand all channels"),
+        Binding("delete", "reset", "Reset to the default midimap"),
         Binding("/", "filter", "Filter"),
     ]
 
@@ -116,6 +117,7 @@ class MidimapEditScreen(ModalScreen[None]):
         on_store: Callable[[], None] | None = None,
         *args: Any,
         on_name: Callable[[str], None] | None = None,
+        on_reset: Callable[[], None] | None = None,
         name_for: Callable[[int, int], str] | None = None,
         on_channel: Callable[[int, int, int], None] | None = None,
         on_pick: Callable[[int], None] | None = None,
@@ -141,6 +143,7 @@ class MidimapEditScreen(ModalScreen[None]):
         self._on_undo = on_undo
         self._on_store = on_store
         self._on_name = on_name
+        self._on_reset = on_reset
         self._name_for = name_for
         self._on_channel = on_channel
         self._on_pick = on_pick
@@ -529,7 +532,8 @@ class MidimapEditScreen(ModalScreen[None]):
                 "[dim]enter value · / filter · n / p section · c channels · "
                 "x effects · h name · w gate · + / - nudge · digits type · "
                 "r re-read · s store to a location (survives a power "
-                "cycle) · z / Z undo · esc / q close[/dim]",
+                "cycle) · del reset to the default · z / Z undo · "
+                "esc / q close[/dim]",
                 classes="hints",
             )
 
@@ -921,6 +925,16 @@ class MidimapEditScreen(ModalScreen[None]):
     def action_store(self) -> None:
         if self._on_store is not None:
             self._on_store()
+
+    def action_reset(self) -> None:
+        """Ask the app to reset this map to the default (``-defMIDIMap-``).
+
+        The screen sends nothing itself: the app confirms, backs up and
+        stores the default. See the manual's Save Midimap screen (p.35),
+        which shows the factory default at ``M00 -defMIDIMap-``.
+        """
+        if self._on_reset is not None:
+            self._on_reset()
 
     def action_undo(self) -> None:
         if self._on_undo is not None:

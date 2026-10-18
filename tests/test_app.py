@@ -1649,3 +1649,29 @@ class TestTheStorePersists:
             screen.action_close()
             await pilot.pause()
             assert isinstance(app.screen, ConfirmScreen)
+
+    async def test_del_resets_the_midimap_to_the_default(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            index = app._current_midimap_index
+            assert index is not None
+            stores_before = len(device.midimap_stores)
+            app._reset_midimap_to_default()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            await pilot.press("y")
+            await _settle(app, pilot)
+            await pilot.pause()
+            # exactly one store, over the open location (the default is M00)
+            assert len(device.midimap_stores) - stores_before == 1
+            assert device.midimap_stores[-1][0] == index
