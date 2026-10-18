@@ -1939,3 +1939,46 @@ class TestMidimapStoreUndo:
             assert len(device.midimap_stores) == stores_before2
             assert any("write gate is locked" in m for m, _ in said), said
             assert len(app._changes) == 1
+
+
+class TestStartupCatalogVerification:
+    """The catalog is a cache: it paints the window, then is re-read."""
+
+    async def test_a_non_empty_catalog_is_verified_in_the_background(
+        self,
+    ) -> None:
+        device = DemoDevice()
+        catalog = cat.Catalog([cat.Entry("P-ROM", 0, "Printed")])
+        app = EmorphedApp(
+            device, catalog=catalog, verify_catalog_at_startup=True
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause(0.6)
+            await _settle(app, pilot)
+            await pilot.pause()
+        assert app.catalog.live_count > 0
+
+    async def test_verification_is_off_unless_asked(self) -> None:
+        device = DemoDevice()
+        catalog = cat.Catalog([cat.Entry("P-ROM", 0, "Printed")])
+        app = EmorphedApp(device, catalog=catalog)
+        async with app.run_test() as pilot:
+            await pilot.pause(0.6)
+            await _settle(app, pilot)
+            await pilot.pause()
+        assert app.catalog.live_count == 0
+
+    async def test_the_demo_is_never_verified(self) -> None:
+        device = DemoDevice()
+        catalog = cat.Catalog([cat.Entry("P-ROM", 0, "Printed")])
+        app = EmorphedApp(
+            device,
+            catalog=catalog,
+            demo=True,
+            verify_catalog_at_startup=True,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause(0.6)
+            await _settle(app, pilot)
+            await pilot.pause()
+        assert app.catalog.live_count == 0

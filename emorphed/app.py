@@ -297,7 +297,7 @@ class EmorphedApp(App[None]):
         Binding("k", "cycle_kind", "Kind view"),
     ]
 
-    def __init__(  # noqa: PLR0913
+    def __init__(  # noqa: PLR0913, PLR0915
         self,
         device: Device,
         *,
@@ -308,6 +308,7 @@ class EmorphedApp(App[None]):
         demo: bool = False,
         offer_scan: bool = False,
         allow_write: bool = False,
+        verify_catalog_at_startup: bool = False,
     ) -> None:
         super().__init__()
         #: Everything ``z`` can reverse, in the order it happened. Made
@@ -334,6 +335,11 @@ class EmorphedApp(App[None]):
         self._offer_scan = offer_scan
         #: Starting state for the write gate.
         self._allow_write = allow_write
+        #: Whether to re-read every kind's names once, quietly, after the
+        #: first frame. The catalog on disk is a cache that painted the
+        #: window; this corrects it from the unit. Off by default so a test
+        #: never starts a background read it did not ask for.
+        self._verify_catalog_at_startup = verify_catalog_at_startup
         #: Whether a midimap backup has succeeded this session.
         self._midimap_backed_up = False
         #: Whether scratch edits have been made this session and not yet
@@ -1689,7 +1695,7 @@ class EmorphedApp(App[None]):
         # -- are its business, not the library's.
         yield KeyHints(KEY_HINTS)
 
-    def on_mount(self) -> None:
+    def on_mount(self) -> None:  # noqa: C901
         self.title = "emorphed"
         table = self.query_one("#bank-table", DataTable)
         for label, key in (
@@ -1767,6 +1773,15 @@ class EmorphedApp(App[None]):
             )
         if self._offer_scan:
             self.set_timer(0.6, self._maybe_offer_scan)
+        if (
+            self._verify_catalog_at_startup
+            and not self._demo
+            and (self.catalog or self.catalog.live_count)
+        ):
+            # The catalog painted this window; correct it from the unit in
+            # the background once the first frame is up. Empty means the
+            # scan offer handles the first run.
+            self.set_timer(0.4, self._verify_catalog_now)
 
     # --- filling ------------------------------------------------------------
 
@@ -2423,7 +2438,55 @@ class EmorphedApp(App[None]):
             self._exchange.release()
         self.call_from_thread(self._adopt_kind, kind, names)
 
-    def _adopt_kind(self, kind: str, names: list[str]) -> None:  # noqa: C901
+    def _verify_catalog_now(self) -> None:
+        """Re-read every kind's names once, in the background.
+
+        The catalog on disk is a cache: it paints the window, but it can be
+        a day old. This corrects it from the unit -- one list request per
+        kind, silent -- without blocking the first frame and without moving
+        the cursor. It shares the one-exchange lock, so it can never overlap
+        a user action; if the wire is busy it simply does not run this time.
+        """
+        if self._demo:
+            return
+        if self._busy:
+            return
+        if not self._exchange.acquire(blocking=False):
+            return
+        self._verify_catalog_worker()
+
+    @work(thread=True)
+    def _verify_catalog_worker(self) -> None:
+        """**MIDI only** -- all three name lists, quiet, best-effort.
+
+        Whatever was read last time is already on screen when this runs, so
+        it only ever *corrects* the display. A failure keeps the stored names
+        (and says so); success says nothing, because the user did not ask
+        for it and three "read N names" lines would bury the startup status.
+        """
+        try:
+            with self._busy_gate:
+                for kind in banks.Kind.ALL:
+                    try:
+                        names = self.device.names(kind)
+                    except _BRIDGE_ERRORS as exc:
+                        self.call_from_thread(
+                            self.notify_status,
+                            f"could not verify {kind} names ({exc}); "
+                            f"keeping the ones read last time",
+                            refused=True,
+                        )
+                        continue
+                    self.call_from_thread(self._adopt_kind_quiet, kind, names)
+        finally:
+            self._exchange.release()
+
+    def _adopt_kind_quiet(self, kind: str, names: list[str]) -> None:
+        self._adopt_kind(kind, names, quiet=True)
+
+    def _adopt_kind(  # noqa: C901
+        self, kind: str, names: list[str], *, quiet: bool = False
+    ) -> None:
         """File a flat list of names back into the regions it spans.
 
         The reply is "every preset, in the order they appear" -- one list
@@ -2474,7 +2537,8 @@ class EmorphedApp(App[None]):
                 f"; {expected - adopted} short of {expected}, which "
                 f"is what no card fitted looks like"
             )
-        self.notify_status(f"read {adopted} {kind} name(s){short}")
+        if not quiet:
+            self.notify_status(f"read {adopted} {kind} name(s){short}")
 
     def _maybe_offer_scan(self) -> None:
         """Offer a scan when there is nothing to start from.
@@ -2915,6 +2979,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
         demo=args.demo,
         offer_scan=not args.demo,
         allow_write=args.allow_write,
+        verify_catalog_at_startup=not args.demo,
     )
     try:
         app.run()

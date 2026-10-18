@@ -309,7 +309,11 @@ A channel's selected preset is shown by name (`003 - Pad:BallHyvs`); `+`/`-` on 
 - **Live names kept between sessions.** Names read off the unit go into
   `live-names.json` beside the favourites database, so the browser opens on
   your patches rather than the factory list. Override the path with
-  `--live-names`. `rxvcli`-style sharing is via the same file.
+  `--live-names`. `rxvcli`-style sharing is via the same file. The stored
+  names are a **cache that paints the first frame**; after it is up the app
+  re-reads the unit's names **in the background** (one silent list request
+  per kind) and corrects the display -- quietly on success, and keeping the
+  stored names and saying so if the read fails.
 - **Scan.** `S` learns names for all three kinds (silent, one exchange each
   per kind) with progress on a shared `ScanScreen`; cancel is checked between
   kinds. A scan offer appears when the catalog is empty. No sound accompanies

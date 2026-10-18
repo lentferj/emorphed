@@ -78,7 +78,10 @@ This is the fact that shapes everything:
    one reply, in the order the instrument shows them. Reading names
    (`r` and the auto-reads) sends no sound, needs no prompt and no
    `--yes`, and the code must not imply otherwise. This is the main thing
-   emorphed can do that rxved cannot.
+   emorphed can do that rxved cannot. **The catalog is a cache**: it paints
+   the first frame, then the app re-reads the unit's names in the
+   background (all three kinds, silent, one request each) and corrects it --
+   the rxved `read_banks_at_startup` shape. Off in tests and the demo.
 2. **A request the unit cannot serve is ignored, not refused.** A timeout
    never distinguishes absent from wrong port from wrong device ID from
    SysEx disabled from busy. Never write an error that picks one; list them
