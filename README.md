@@ -295,7 +295,9 @@ A channel's selected preset is shown by name (`003 - Pad:BallHyvs`); `+`/`-` on 
   from the newly stored map. Midimap numbers: 0-15 RAM, 16-31 CARD".
   **`del` resets** the open map to the factory default (`-defMIDIMap-`,
   which lives at RAM `M00` -- manual p.35) by storing it over the current
-  location, behind a confirmation and a backup.
+  location, behind a confirmation and a backup. Closing the editor reloads
+  the browser, so a rename, a store or a reset shows up in the midimap list
+  at once.
 - **Live names kept between sessions.** Names read off the unit go into
   `live-names.json` beside the favourites database, so the browser opens on
   your patches rather than the factory list. Override the path with

@@ -1675,3 +1675,33 @@ class TestTheStorePersists:
             # exactly one store, over the open location (the default is M00)
             assert len(device.midimap_stores) - stores_before == 1
             assert device.midimap_stores[-1][0] == index
+
+    async def test_closing_the_editor_reloads_the_browser(
+        self, app: EmorphedApp, device: DemoDevice
+    ) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # the browser is looking at the RAM midimaps
+            app.action_cycle_kind()
+            app.action_cycle_kind()
+            await pilot.pause()
+            assert app._current_bank == "M-RAM"
+            app._gate.toggle()  # arm the write gate
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            app._apply_midimap_name("Reset Map 01")
+            await _settle(app, pilot)
+            await pilot.pause()
+            screen = cast(Any, app.screen)
+            screen.action_close()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)  # unstored warning
+            await pilot.press("y")
+            await pilot.pause()
+            # the browser reloaded: the renamed midimap shows its new name
+            slots = app.query_one("#slot-table", DataTable)
+            names = [
+                str(slots.get_row_at(i)[2]) for i in range(slots.row_count)
+            ]
+            assert any("Reset Map 01" in name for name in names), names

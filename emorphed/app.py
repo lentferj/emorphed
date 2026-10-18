@@ -637,7 +637,7 @@ class EmorphedApp(App[None]):
             )
 
         screen.action_close = _guarded_close  # type: ignore[method-assign]
-        self.push_screen(screen)
+        self.push_screen(screen, self._after_midimap_edit)
         if assumed:
             msg = f"midimap {index} (assumed -- nothing selected this session)"
             self.call_later(screen.say, msg)
@@ -783,6 +783,10 @@ class EmorphedApp(App[None]):
         if agreed:
             msg = f"name written: {shown_name!r}; read-back agreed (12/12)"
             self._mark_midimap_unstored(True)
+            index = getattr(self, "_current_midimap_index", None)
+            words_now = self._current_midimap_words
+            if index is not None and words_now is not None:
+                self._remember_midimap_name(index, list(words_now))
         else:
             msg = (
                 f"name written: {shown_name!r}; read-back disagreed "
@@ -1035,6 +1039,37 @@ class EmorphedApp(App[None]):
             with contextlib.suppress(Exception):
                 screen.set_unstored(value)
 
+    def _remember_midimap_name(self, index: int, words: list[int]) -> None:
+        """Name a midimap in the catalog after a write.
+
+        A rename, a store or a reset changes what the unit calls a midimap,
+        but the browser's catalog is only refreshed by reading names off
+        the unit. This keeps the one slot that changed in step, so the
+        browser is not stale when the editor closes.
+        """
+        for region in banks.regions(banks.Kind.MIDIMAP):
+            if region.first <= index <= region.last:
+                try:
+                    name = mm.name_of(words)
+                except Exception:
+                    return
+                self.catalog.set_live_name(
+                    region.id, index - region.first, name
+                )
+                return
+
+    def _after_midimap_edit(self, _result: Any = None) -> None:
+        """Reload the browser when the midimap editor closes.
+
+        An edit can change a midimap's name (a rename, a store to another
+        location, a reset to the default), so the slot pane is rebuilt from
+        the catalog -- which the write paths above have kept in step --
+        rather than left showing a name the unit no longer holds.
+        """
+        if getattr(self, "_current_bank", None):
+            with contextlib.suppress(Exception):
+                self._refill_keeping_place()
+
     def _backup_before_write(self) -> None:
         if self._midimap_backed_up:
             return
@@ -1243,6 +1278,7 @@ class EmorphedApp(App[None]):
                 top.say(sentence, refused=refused)
         if not refused:
             self._mark_midimap_unstored(False)
+            self._remember_midimap_name(loc, words)
 
     def _reset_midimap_to_default(self) -> None:
         """Reset the open midimap to the factory default (``-defMIDIMap-``).
@@ -1350,6 +1386,7 @@ class EmorphedApp(App[None]):
                 refused = False
                 self._current_midimap_words = list(default)
                 self._midimap_unstored = False
+                self._remember_midimap_name(index, default)
                 if top is not None and hasattr(top, "update_params"):
                     params = {off: default[off] for off in range(len(default))}
                     with contextlib.suppress(Exception):
