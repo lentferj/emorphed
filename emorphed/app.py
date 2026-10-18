@@ -278,6 +278,7 @@ class EmorphedApp(App[None]):
         Binding("Z", "undo_all", "Undo all"),
         Binding("w", "toggle_write_gate", "Write gate"),
         Binding("m", "midimap_edit", "Midimap edit"),
+        Binding("delete", "reset_midimap", "Reset midimap"),
         Binding("slash", "search", "Search"),
         Binding("i", "device_info", "Device"),
         Binding("question_mark", "help", "Help"),
@@ -1280,19 +1281,24 @@ class EmorphedApp(App[None]):
             self._mark_midimap_unstored(False)
             self._remember_midimap_name(loc, words)
 
-    def _reset_midimap_to_default(self) -> None:
-        """Reset the open midimap to the factory default (``-defMIDIMap-``).
+    def _reset_midimap_to_default(self, index: int | None = None) -> None:
+        """Reset a midimap to the factory default (``-defMIDIMap-``).
 
         The manual's Save Midimap screen names the default at ``M00``
-        (p.35): a reset stores that map over the current location. It is a
+        (p.35): a reset stores that map over the given location. It is a
         store, so it is fenced the same way -- a backup first, a
         confirmation that says what is erased, and a read-back.
+
+        When ``index`` is ``None`` the open editor's location is used
+        (``self._current_midimap_index``, else ``device.current_midimap``,
+        else ``0``), preserving the editor's behaviour.
         """
-        _idx = getattr(self, "_current_midimap_index", None)
-        if _idx is None:
-            _cm = getattr(self.device, "current_midimap", None)
-            _idx = 0 if _cm is None else _cm
-        index = _idx
+        if index is None:
+            _idx = getattr(self, "_current_midimap_index", None)
+            if _idx is None:
+                _cm = getattr(self.device, "current_midimap", None)
+                _idx = 0 if _cm is None else _cm
+            index = _idx
 
         def answered(confirmed: bool | None) -> None:
             if not confirmed:
@@ -1394,6 +1400,8 @@ class EmorphedApp(App[None]):
                 if top is not None and hasattr(top, "set_unstored"):
                     with contextlib.suppress(Exception):
                         top.set_unstored(False)
+                with contextlib.suppress(Exception):
+                    self._after_midimap_edit()
                 sentence = (
                     f"reset M{index:02d} to the default midimap "
                     f"(read back {agreed}/{len(default)} words agree)"
@@ -1765,6 +1773,17 @@ class EmorphedApp(App[None]):
         if not self._current or row is None or row >= len(self._current):
             return None
         return self._current[row]
+
+    def action_reset_midimap(self) -> None:
+        entry = self._cursor_entry()
+        if entry is None:
+            return
+        if entry.kind != banks.Kind.MIDIMAP:
+            self.notify_status(
+                "only a midimap can be reset to its default", refused=True
+            )
+            return
+        self._reset_midimap_to_default(entry.index)
 
     # --- the send channel ---------------------------------------------------
 

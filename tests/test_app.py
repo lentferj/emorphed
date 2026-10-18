@@ -1676,6 +1676,57 @@ class TestTheStorePersists:
             assert len(device.midimap_stores) - stores_before == 1
             assert device.midimap_stores[-1][0] == index
 
+    async def test_browser_del_on_a_midimap_row_resets_to_default(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # switch the browser to the midimap kind
+            app.action_cycle_kind()
+            app.action_cycle_kind()
+            await pilot.pause()
+            table = app.query_one("#slot-table", DataTable)
+            table.move_cursor(row=2, column=0)
+            await pilot.pause()
+            entry = app._cursor_entry()
+            assert entry is not None
+            assert entry.kind == banks.Kind.MIDIMAP
+            row_index = entry.index
+            stores_before = len(device.midimap_stores)
+            await pilot.press("delete")
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            await pilot.press("y")
+            await _settle(app, pilot)
+            await pilot.pause()
+            # exactly one store, over that row's location
+            assert len(device.midimap_stores) - stores_before == 1
+            assert device.midimap_stores[-1][0] == row_index
+
+    async def test_browser_del_on_a_preset_row_refuses(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+    ) -> None:
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            await pilot.press("delete")
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before
+            assert not isinstance(app.screen, ConfirmScreen)
+            assert any(
+                msg == "only a midimap can be reset to its default" and refused
+                for msg, refused in said
+            )
+
     async def test_closing_the_editor_reloads_the_browser(
         self, app: EmorphedApp, device: DemoDevice
     ) -> None:

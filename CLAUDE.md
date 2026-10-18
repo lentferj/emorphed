@@ -124,7 +124,8 @@ each rule below is a rule, not a suggestion:
   erased, wait for a confirmation. It is refused outright without a
   successful backup this session. **`del` in the editor is the same store**
   aimed at the open location, carrying the factory default (`-defMIDIMap-`,
-  at M00 -- manual p.35): back up, confirm, store, read back.
+  at M00 -- manual p.35): back up, confirm, store, read back. **`del` in the
+  browser** aims the same reset at the midimap row under the cursor.
 - **Scratch versus stored.** A parameter write edits the unit's **scratch**
   midimap: the value it is using right now, live, not permanent. Only a
   **store** makes an edit part of a stored location, and loading a stored map
