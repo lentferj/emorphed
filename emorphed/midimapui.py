@@ -585,7 +585,7 @@ class MidimapEditScreen(ModalScreen[None]):
             f"[b]Midimap edit[/b] - M{self._index:02d} - {literal(name)}"
         )
 
-    def result(  # noqa: C901, PLR0912
+    def result(  # noqa: C901, PLR0912, PLR0915
         self,
         ok: bool,
         message: str,
@@ -606,9 +606,13 @@ class MidimapEditScreen(ModalScreen[None]):
                     and 0 <= off < _NAME_WORDS
                     and "name" not in self._all_rows
                 ):
+                    row = self._current_row()
+                    column = self._cursor_column()
                     self._build_rows()
                     self._ordered = self._visible_rows()
                     self._refresh_table()
+                    if row is not None:
+                        self._move_to(row, column)
 
                 try:
                     table = self.query_one("#midimap-table", DataTable)
@@ -683,8 +687,12 @@ class MidimapEditScreen(ModalScreen[None]):
             if off is not None:
                 self._pre_edit.pop(off, None)
         elif off is not None and off in self._pre_edit:
+            row = self._current_row()
+            column = self._cursor_column()
             self._values[off] = self._pre_edit.pop(off)
             self._refresh_table()
+            if row is not None:
+                self._move_to(row, column)
             self._update_status()
         self.say(message, refused=not ok)
 
@@ -726,6 +734,19 @@ class MidimapEditScreen(ModalScreen[None]):
                 new_bank, new_number = mm.step_channel_preset(bank, number, by)
             except ValueError as exc:
                 self.say(str(exc), refused=True)
+                return
+            # gate check: both words go through the editor's gate
+            refusal = None
+            try:
+                refusal = self._editor.allow(base + 1, new_bank)
+                if refusal is None:
+                    refusal = self._editor.allow(base, new_number)
+            except Exception:
+                refusal = None
+            if refusal is not None:
+                with contextlib.suppress(Exception):
+                    refusal = self._editor.gate.refuse() or refusal
+                self.say(refusal, refused=True)
                 return
             # The pair is optimistic: both words are painted now and the
             # write itself belongs to on_channel (one exchange in the app).
@@ -1062,11 +1083,15 @@ class MidimapEditScreen(ModalScreen[None]):
         current = self._filter
 
         def apply(text: str | None) -> None:
+            row = self._current_row()
+            column = self._cursor_column()
             if text is None:
                 self._filter = ""
             else:
                 self._filter = text
             self._refresh_table()
+            if row is not None:
+                self._move_to(row, column)
             self._update_status()
 
         self.app.push_screen(PromptScreen("filter label:", current), apply)
@@ -1132,6 +1157,9 @@ class MidimapEditScreen(ModalScreen[None]):
                 self._typing = ""
                 self._typing_offset = None
                 return
+            self._pre_edit.setdefault(
+                int(off), self._values.get(int(off), value)
+            )
             self._values[int(off)] = value
             if self._on_edit is not None:
                 self._on_edit(int(off), value)
@@ -1191,6 +1219,7 @@ class MidimapEditScreen(ModalScreen[None]):
         self._build_rows()
         self._filter = ""
         self._ordered = self._visible_rows()
+        self._pre_edit.clear()
         self._refresh_table()
         if row is not None:
             self._move_to(row, column)

@@ -375,7 +375,7 @@ class MorpheusBridge:
                 f"param {param} is outside the midimap parameter range "
                 f"{_low}-{_high} (manual pp. 249-250)"
             )
-        if not 0 <= value <= 0x3FFF:  # noqa: PLR2004
+        if not -0x2000 <= value <= 0x3FFF:  # noqa: PLR2004
             raise m.ProtocolError(
                 f"value {value} is outside the fourteen-bit range 0-0x3FFF "
                 f"(16383)"

@@ -151,13 +151,11 @@ class MidimapEditor:
                 f"{param.label} must be {param.low}-{param.high}, "
                 f"and {value} is not"
             )
-        if param.choices:
-            index = value - param.low
-            if index < 0 or index >= len(param.choices):
-                return (
-                    f"{param.label} must be one of "
-                    f"{', '.join(param.choices)}, and {value} is not"
-                )
+        if param.choices and value not in mm.values_for(param):
+            return (
+                f"{param.label} must be one of "
+                f"{', '.join(param.choices)}, and {value} is not"
+            )
         return None
 
     def finish(

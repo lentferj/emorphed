@@ -63,6 +63,7 @@ from textual.containers import Horizontal
 from textual.widgets import DataTable, Header, Static
 
 from emorphed import edit as edmod
+from emorphed.midimapui import MidimapEditScreen
 from emorphed.scan import SCAN_OFFER, ScanOfferScreen, ScanScreen
 from emorphed.screens import (
     KEY_HINTS,
@@ -340,6 +341,8 @@ class EmorphedApp(App[None]):
         #: window; this corrects it from the unit. Off by default so a test
         #: never starts a background read it did not ask for.
         self._verify_catalog_at_startup = verify_catalog_at_startup
+        #: The currently open midimap editor screen, if any.
+        self._edit_screen: MidimapEditScreen | None = None
         #: Whether a midimap backup has succeeded this session.
         self._midimap_backed_up = False
         #: Whether scratch edits have been made this session and not yet
@@ -1083,6 +1086,7 @@ class EmorphedApp(App[None]):
         the catalog -- which the write paths above have kept in step --
         rather than left showing a name the unit no longer holds.
         """
+        self._edit_screen = None
         if getattr(self, "_current_bank", None):
             with contextlib.suppress(Exception):
                 self._refill_keeping_place()
