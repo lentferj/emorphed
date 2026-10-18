@@ -19,6 +19,7 @@ from emorphed.screens import (
     VIEW_ALL_FAVOURITES,
     VIEW_BANK_FAVOURITES,
     VIEW_CYCLE,
+    MidimapPickerScreen,
     PresetPickerScreen,
 )
 from emu import catalog, favorites
@@ -156,3 +157,94 @@ async def test_modal_scales() -> None:
             widths[terminal_width] = screen.query_one(Vertical).size.width
     assert widths[80] < 80  # noqa: PLR2004
     assert widths[140] > 100  # noqa: PLR2004
+
+
+def _dismiss_capture(screen: Any) -> dict[str, Any]:
+    """Record what a screen dismisses with, without changing the pop."""
+    got: dict[str, Any] = {}
+    original = screen.dismiss
+
+    def capture(value: Any = None) -> Any:
+        got["value"] = value
+        return original(value)
+
+    screen.dismiss = capture
+    return got
+
+
+@pytest.mark.asyncio
+async def test_midimap_picker_banks_are_ram_then_card() -> None:
+    """Store destinations are the two midimap regions (manual p.233)."""
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        screen = MidimapPickerScreen(catalog.empty())
+        app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#picker-banks", DataTable)
+        assert table.row_count == 2  # noqa: PLR2004
+        assert "RAM" in str(table.get_row_at(0)[0])
+        assert "card" in str(table.get_row_at(1)[0])
+
+
+@pytest.mark.asyncio
+async def test_midimap_picker_returns_a_ram_location() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        screen = MidimapPickerScreen(catalog.empty())
+        app.push_screen(screen)
+        await pilot.pause()
+        got = _dismiss_capture(screen)
+        await pilot.press("tab")  # the slot pane
+        await pilot.pause()
+        slots = screen.query_one("#picker-slots", DataTable)
+        slots.move_cursor(row=2)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert got["value"] == 2  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_midimap_picker_card_bank_returns_16_plus() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        screen = MidimapPickerScreen(catalog.empty())
+        app.push_screen(screen)
+        await pilot.pause()
+        got = _dismiss_capture(screen)
+        banks_table = screen.query_one("#picker-banks", DataTable)
+        banks_table.move_cursor(row=1)  # M-CARD
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        screen.query_one("#picker-slots", DataTable).move_cursor(row=2)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert got["value"] == 18  # noqa: PLR2004  (16 card base + 2)
+
+
+@pytest.mark.asyncio
+async def test_midimap_picker_names_slots_from_the_catalog() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        screen = MidimapPickerScreen(
+            catalog.Catalog([catalog.Entry("M-RAM", 0, "Invented Map")])
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+        slots = screen.query_one("#picker-slots", DataTable)
+        assert "Invented Map" in str(slots.get_row_at(0)[1])
+
+
+@pytest.mark.asyncio
+async def test_midimap_picker_cancel_returns_none() -> None:
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        screen = MidimapPickerScreen(catalog.empty())
+        app.push_screen(screen)
+        await pilot.pause()
+        got = _dismiss_capture(screen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert got["value"] is None

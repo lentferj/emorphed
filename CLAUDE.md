@@ -119,8 +119,9 @@ each rule below is a rule, not a suggestion:
   recorded for undo.
 - **The store is named and confirmed.** Sending a whole midimap to a
   location is the one destructive step: it erases what is there (manual
-  p.36). It goes **arm-then-fire** -- ask for the location, say what is
-  erased, wait for a confirmation -- and it is refused outright without a
+  p.36). `s` opens a browser of the midimaps -- RAM 0-15 and card 16-31, by
+  name -- and goes **arm-then-fire** from the chosen location: say what is
+  erased, wait for a confirmation. It is refused outright without a
   successful backup this session.
 - **Scratch versus stored.** A parameter write edits the unit's **scratch**
   midimap: the value it is using right now, live, not permanent. Only a

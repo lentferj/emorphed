@@ -67,6 +67,7 @@ from emorphed.scan import SCAN_OFFER, ScanOfferScreen, ScanScreen
 from emorphed.screens import (
     KEY_HINTS,
     KeyHints,
+    MidimapPickerScreen,
     PresetPickerScreen,
     PromptScreen,
     ReportScreen,
@@ -1097,7 +1098,7 @@ class EmorphedApp(App[None]):
         if ok:
             self._mark_midimap_unstored(True)
 
-    def _store_midimap(self) -> None:  # noqa: C901
+    def _store_midimap(self) -> None:
         if not self._midimap_backed_up:
             sentence = "store refused: no midimap backup this session"
             self.notify_status(sentence, refused=True)
@@ -1115,42 +1116,21 @@ class EmorphedApp(App[None]):
         index = _idx
         words = list(getattr(self, "_current_midimap_words", []))
 
-        def answered(text: str | None) -> None:
-            if not text:
+        def answered(loc: int | None) -> None:
+            if loc is None:
                 return
-            try:
-                loc = int(text)
-            except ValueError:
-                sentence = f"{literal(text)!r} is not a number"
-                self.notify_status(sentence, refused=True)
-                top = getattr(self, "_edit_screen", None)
-                if top is None:
-                    top = self.screen
-                if top is not None and hasattr(top, "say"):
-                    with contextlib.suppress(Exception):
-                        top.say(sentence, refused=True)
-                return
-            if not 0 <= loc <= 31:
-                sentence = "a midimap location is 0-31"
-                self.notify_status(sentence, refused=True)
-                top = getattr(self, "_edit_screen", None)
-                if top is None:
-                    top = self.screen
-                if top is not None and hasattr(top, "say"):
-                    with contextlib.suppress(Exception):
-                        top.say(sentence, refused=True)
-                return
+            # The picker chose a location by bank and name; the erase is
+            # still the destructive step, so it keeps its own confirmation
+            # (manual p.36).
             self.push_screen(
-                ConfirmScreen(
-                    f"STORE to location {loc}: erases what is there"
-                ),
+                ConfirmScreen(f"STORE to M{loc:02d}: erases what is there"),
                 lambda confirmed: self._store_confirmed(
                     loc, words, confirmed, index=index
                 ),
             )
 
         self.push_screen(
-            PromptScreen("Store to midimap location (0-31):", str(index)),
+            MidimapPickerScreen(self.catalog, current=index),
             answered,
         )
 

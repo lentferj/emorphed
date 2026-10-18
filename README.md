@@ -279,8 +279,10 @@ tags, notes, search, device info. Morpheus-specific:
 A channel's selected preset is shown by name (`003 - Pad:BallHyvs`); `+`/`-` on a collapsed channel summary steps the preset, rolling into the next bank at a boundary (bank 1/preset 127 + → bank 2/preset 0); and `Enter` on the channel's Ch. Program or Ch. Bank cell opens a favourite-aware preset picker that sets both cells.
 
   `s` is the **store** -- sending the whole map to a location -- and is
-  **arm-then-fire**: it asks for a location, says what it erases, and waits
-  for a confirmation, and it is refused outright without a backup.
+  **arm-then-fire**: it opens a **browser of the midimaps** -- RAM 0-15 and
+  card 16-31, listed by name -- names the chosen location, says what it
+  erases, and waits for a confirmation; it is refused outright without a
+  backup.
 
   The editor says the distinction in its own footer and status:
   `s store to a location (survives a power cycle)`. What a parameter write

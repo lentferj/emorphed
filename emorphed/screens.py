@@ -45,6 +45,7 @@ __all__ = [
     "VIEW_CYCLE",
     "VIEW_LABEL",
     "KeyHints",
+    "MidimapPickerScreen",
     "PickerPosition",
     "PresetPickerScreen",
     "PromptScreen",
@@ -384,6 +385,159 @@ class PresetPickerScreen(ModalScreen[tuple[int, int] | None]):
         self._view = (self._view + 1) % len(VIEW_CYCLE)
         self.query_one("#picker-title", Label).update(self._title())
         self._fill_slots()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class MidimapPickerScreen(ModalScreen[int | None]):
+    """Pick the midimap location to store to, by bank and name.
+
+    Two panes: the midimap regions -- RAM 0-15, card 16-31 (manual p.233)
+    -- and the selected bank's stored midimaps, named from the catalog.
+    ``tab`` switches panes; arrows move; ``⏎`` picks; ``escape``/``q``
+    cancel. Returns the location 0-31 -- the number a Midimap Data store
+    writes to -- or ``None``.
+    """
+
+    DEFAULT_CSS = """
+    MidimapPickerScreen { align: center middle; }
+    MidimapPickerScreen > Vertical {
+        width: 90%; height: 90%; border: thick $accent;
+        background: $surface; padding: 1 2;
+    }
+    MidimapPickerScreen DataTable { height: 1fr; width: 1fr; }
+    MidimapPickerScreen .hint { color: $text-muted; }
+    """
+
+    BINDINGS: ClassVar[list[Any]] = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("q", "cancel", "Cancel"),
+        Binding("tab", "switch_pane", "Switch pane", show=False),
+    ]
+
+    #: The midimap regions: RAM 0-15, card 16-31 (manual p.233).
+    BANK_IDS: ClassVar[tuple[str, ...]] = ("M-RAM", "M-CARD")
+
+    def __init__(
+        self,
+        catalog: Any,
+        *,
+        current: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._catalog = catalog
+        self._current = current
+        self._filled_bank: str | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("[b]Store to a midimap[/b]", id="picker-title")
+            with Horizontal():
+                yield DataTable(
+                    id="picker-banks", cursor_type="row", zebra_stripes=True
+                )
+                yield DataTable(
+                    id="picker-slots", cursor_type="row", zebra_stripes=True
+                )
+            yield Static(
+                "[dim]tab pane · enter store here · esc cancel[/dim]",
+                classes="hint",
+            )
+
+    def on_mount(self) -> None:
+        table = self.query_one("#picker-banks", DataTable)
+        table.add_column("bank", key="bank")
+        for region_id in self.BANK_IDS:
+            table.add_row(banks.region(region_id).label, key=region_id)
+        table.focus()
+        self._fill_slots()
+        self._select_current()
+
+    def _bank_id(self) -> str | None:
+        return self._cursor_key("#picker-banks")
+
+    def _cursor_key(self, table_id: str) -> str | None:
+        table = self.query_one(table_id, DataTable)
+        if not table.row_count:
+            return None
+        return str(
+            table.coordinate_to_cell_key(table.cursor_coordinate)[0].value
+        )
+
+    def _select_row(self, table_id: str, key: str) -> None:
+        table = self.query_one(table_id, DataTable)
+        for index, row_key in enumerate(table.rows):
+            if str(row_key.value) == key:
+                table.move_cursor(row=index)
+                return
+
+    def _fill_slots(self) -> None:
+        self._filled_bank = self._bank_id()
+        table = self.query_one("#picker-slots", DataTable)
+        table.clear(columns=True)
+        table.add_column("midimap", key="number")
+        table.add_column("name", key="name")
+        if self._filled_bank is None:
+            return
+        for slot in banks.slots(self._filled_bank):
+            name = self._catalog.display_name(self._filled_bank, slot.number)
+            here = "  <- current" if slot.index == self._current else ""
+            table.add_row(f"{slot.index:02d}", name + here, key=slot.key)
+
+    def _select_current(self) -> None:
+        if self._current is None:
+            return
+        for region_id in self.BANK_IDS:
+            region = banks.region(region_id)
+            if region.first <= self._current <= region.last:
+                self._select_row("#picker-banks", region_id)
+                self._fill_slots()
+                self._select_row(
+                    "#picker-slots",
+                    f"{region_id}:{self._current - region.first:03d}",
+                )
+                return
+
+    def _location(self) -> int | None:
+        table = self.query_one("#picker-slots", DataTable)
+        if not table.row_count:
+            return None
+        key = str(
+            table.coordinate_to_cell_key(table.cursor_coordinate)[0].value
+        )
+        region_id, _, number_str = key.rpartition(":")
+        if region_id not in self.BANK_IDS:
+            return None
+        try:
+            number = int(number_str)
+        except ValueError:
+            return None
+        return banks.region(region_id).first + number
+
+    def on_data_table_row_highlighted(self, event: Any) -> None:
+        if getattr(event, "data_table", None) is None:
+            return
+        if event.data_table.id != "picker-banks":
+            return
+        if self._bank_id() == self._filled_bank:
+            return
+        self._fill_slots()
+
+    def on_data_table_row_selected(self, event: Any) -> None:
+        if getattr(event, "data_table", None) is None:
+            return
+        if event.data_table.id != "picker-slots":
+            return
+        self.dismiss(self._location())
+
+    def action_switch_pane(self) -> None:
+        focused = self.focused
+        if isinstance(focused, DataTable) and focused.id == "picker-banks":
+            self.query_one("#picker-slots", DataTable).focus()
+        else:
+            self.query_one("#picker-banks", DataTable).focus()
 
     def action_cancel(self) -> None:
         self.dismiss(None)

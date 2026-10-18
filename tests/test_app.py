@@ -37,7 +37,11 @@ from emorphed.app import (
 )
 from emorphed.demo import DemoDevice, _seed_midimap
 from emorphed.scan import ScanScreen
-from emorphed.screens import KeyHints, PromptScreen, ReportScreen
+from emorphed.screens import (
+    KeyHints,
+    MidimapPickerScreen,
+    ReportScreen,
+)
 from emu import backup as bk
 from emu import banks, config
 from emu import catalog as cat
@@ -750,7 +754,7 @@ class TestMidimapAppWriteGateAndStore:
             assert len(device.midimap_stores) == stores_before
             assert any("store refused" in msg for msg, _ in said)
 
-    async def test_store_fence_requires_prompt_and_confirmation(
+    async def test_store_opens_the_midimap_picker_then_confirms(
         self, app: EmorphedApp, device: DemoDevice
     ) -> None:
         app._midimap_backed_up = True
@@ -759,14 +763,16 @@ class TestMidimapAppWriteGateAndStore:
             stores_before = len(device.midimap_stores)
             app._store_midimap()
             await pilot.pause()
-            assert isinstance(app.screen, PromptScreen)
+            # a browser of the midimaps, by bank and name -- not a number
+            assert isinstance(app.screen, MidimapPickerScreen)
             assert len(device.midimap_stores) == stores_before
-            await pilot.press("5")
+            await pilot.press("tab")  # the slot pane
+            await pilot.pause()
             await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmScreen)
             confirm = cast(Any, app.screen)
-            assert "STORE to location 5" in confirm.prompt_text
+            assert "STORE to M" in confirm.prompt_text
             assert "erases" in confirm.prompt_text
             assert len(device.midimap_stores) == stores_before
             await pilot.press("escape")
@@ -885,43 +891,20 @@ class TestMidimapAppWriteGateAndStore:
             await pilot.pause()
             assert len(device.midimap_stores) == stores_before
 
-    async def test_store_location_prompt_refuses_non_number(
+    async def test_cancelling_the_midimap_picker_stores_nothing(
         self, app: "EmorphedApp", device: DemoDevice
     ) -> None:
         app._midimap_backed_up = True
         async with app.run_test() as pilot:
             await pilot.pause()
             stores_before = len(device.midimap_stores)
-            said = _capture(app)
             app._store_midimap()
             await pilot.pause()
-            assert isinstance(app.screen, PromptScreen)
-            await pilot.press("a")
-            await pilot.press("b")
-            await pilot.press("enter")
+            assert isinstance(app.screen, MidimapPickerScreen)
+            await pilot.press("escape")
             await pilot.pause()
-            assert len(device.midimap_stores) == stores_before
             assert not isinstance(app.screen, ConfirmScreen)
-            assert any("is not a number" in msg for msg, _ in said), said
-
-    async def test_store_location_prompt_refuses_out_of_range(
-        self, app: "EmorphedApp", device: DemoDevice
-    ) -> None:
-        app._midimap_backed_up = True
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            stores_before = len(device.midimap_stores)
-            said = _capture(app)
-            app._store_midimap()
-            await pilot.pause()
-            assert isinstance(app.screen, PromptScreen)
-            await pilot.press("9")
-            await pilot.press("9")
-            await pilot.press("enter")
-            await pilot.pause()
             assert len(device.midimap_stores) == stores_before
-            assert not isinstance(app.screen, ConfirmScreen)
-            assert any("0-31" in msg for msg, _ in said), said
 
 
 class TestStartupSaysWhereTheNamesCameFrom:
