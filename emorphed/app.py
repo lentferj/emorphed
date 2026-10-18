@@ -1149,6 +1149,14 @@ class EmorphedApp(App[None]):
             self._mark_midimap_unstored(True)
 
     def _store_midimap(self) -> None:
+        refusal = self._editor.gate.refuse()
+        if refusal is not None:
+            self.notify_status(refusal, refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    top.say(refusal, refused=True)
+            return
         if not self._midimap_backed_up:
             sentence = "store refused: no midimap backup this session"
             self.notify_status(sentence, refused=True)
@@ -1333,12 +1341,21 @@ class EmorphedApp(App[None]):
         ``M00`` (which is an ordinary user map). A reset stores that map
         over the given location. It is a store, so it is fenced the same
         way -- a backup first, a confirmation that says what is erased, and
-        a read-back.
+        a read-back. Like every write it is behind the gate: a locked gate
+        refuses before the confirmation.
 
         When ``index`` is ``None`` the open editor's location is used
         (``self._current_midimap_index``, else ``device.current_midimap``,
         else ``0``), preserving the editor's behaviour.
         """
+        refusal = self._editor.gate.refuse()
+        if refusal is not None:
+            self.notify_status(refusal, refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    top.say(refusal, refused=True)
+            return
         if index is None:
             _idx = getattr(self, "_current_midimap_index", None)
             if _idx is None:
@@ -1482,9 +1499,19 @@ class EmorphedApp(App[None]):
 
         Best-effort backup first, then a read-back (the store's fence). The
         ``z`` keypress is the confirmation; this is not logged, so a second
-        ``z`` is a no-op. Returns ``False`` without sending when busy or
-        when the exchange cannot be acquired.
+        ``z`` is a no-op. Returns ``False`` without sending when busy, when
+        the write gate is locked, or when the exchange cannot be acquired.
         """
+        refusal = self._editor.gate.refuse()
+        if refusal is not None:
+            self.notify_status(refusal, refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is None:
+                top = self.screen
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    top.say(refusal, refused=True)
+            return False
         if self._busy:
             self.notify_status("busy", refused=True)
             top = getattr(self, "_edit_screen", None)
@@ -1519,7 +1546,15 @@ class EmorphedApp(App[None]):
         newest = self._changes[-n:] if n > 0 else []
         gate_refusal = self._editor.gate.refuse()
         if gate_refusal is not None and any(
-            isinstance(c, (ParamChange, NameChange, ChannelPresetChange))
+            isinstance(
+                c,
+                (
+                    ParamChange,
+                    NameChange,
+                    ChannelPresetChange,
+                    MidimapChange,
+                ),
+            )
             for c in newest
         ):
             self.notify_status(gate_refusal, refused=True)

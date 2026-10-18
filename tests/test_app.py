@@ -758,6 +758,7 @@ class TestMidimapAppWriteGateAndStore:
         self, app: EmorphedApp, device: DemoDevice
     ) -> None:
         app._midimap_backed_up = True
+        app._gate.toggle()  # arm the write gate
         async with app.run_test() as pilot:
             await pilot.pause()
             stores_before = len(device.midimap_stores)
@@ -895,6 +896,7 @@ class TestMidimapAppWriteGateAndStore:
         self, app: "EmorphedApp", device: DemoDevice
     ) -> None:
         app._midimap_backed_up = True
+        app._gate.toggle()  # arm the write gate
         async with app.run_test() as pilot:
             await pilot.pause()
             stores_before = len(device.midimap_stores)
@@ -905,6 +907,20 @@ class TestMidimapAppWriteGateAndStore:
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmScreen)
             assert len(device.midimap_stores) == stores_before
+
+    async def test_store_locked_gate_refuses_before_picker(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._midimap_backed_up = True
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            app._store_midimap()
+            await pilot.pause()
+            assert not isinstance(app.screen, MidimapPickerScreen)
+            assert len(device.midimap_stores) == stores_before
+            assert any("write gate is locked" in m for m, _ in said), said
 
 
 class TestStartupSaysWhereTheNamesCameFrom:
@@ -1658,6 +1674,7 @@ class TestTheStorePersists:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        app._gate.toggle()  # arm the write gate
         async with app.run_test() as pilot:
             await pilot.pause()
             app.action_midimap_edit()
@@ -1685,6 +1702,7 @@ class TestTheStorePersists:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        app._gate.toggle()  # arm the write gate
         async with app.run_test() as pilot:
             await pilot.pause()
             # switch the browser to the midimap kind
@@ -1732,6 +1750,51 @@ class TestTheStorePersists:
                 for msg, refused in said
             )
 
+    async def test_del_locked_gate_refuses_in_editor(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            app._reset_midimap_to_default()
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before
+            assert not isinstance(app.screen, ConfirmScreen)
+            assert any("write gate is locked" in m for m, _ in said), said
+
+    async def test_browser_del_locked_gate_refuses(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_cycle_kind()
+            app.action_cycle_kind()
+            await pilot.pause()
+            table = app.query_one("#slot-table", DataTable)
+            table.move_cursor(row=2, column=0)
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            await pilot.press("delete")
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before
+            assert not isinstance(app.screen, ConfirmScreen)
+            assert any("write gate is locked" in m for m, _ in said), said
+
     async def test_closing_the_editor_reloads_the_browser(
         self, app: EmorphedApp, device: DemoDevice
     ) -> None:
@@ -1768,6 +1831,7 @@ class TestMidimapStoreUndo:
         self, app: "EmorphedApp", device: DemoDevice
     ) -> None:
         app._midimap_backed_up = True
+        app._gate.toggle()  # arm the write gate
         words = [5] * 360
         old = list(device.read_midimap(2))
         async with app.run_test() as pilot:
@@ -1804,6 +1868,7 @@ class TestMidimapStoreUndo:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        app._gate.toggle()  # arm the write gate
         async with app.run_test() as pilot:
             await pilot.pause()
             app.action_midimap_edit()
@@ -1851,3 +1916,26 @@ class TestMidimapStoreUndo:
             await _settle(app, pilot)
             await pilot.pause()
             assert app._changes == []
+
+    async def test_midimap_undo_locked_gate_survives(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._midimap_backed_up = True
+        app._gate.toggle()  # arm
+        words = [5] * 360
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            app._store_confirmed(2, words, True)
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.midimap_stores) - stores_before == 1
+            assert len(app._changes) == 1
+            app._gate.toggle()  # lock
+            said = _capture(app)
+            stores_before2 = len(device.midimap_stores)
+            app.action_undo()
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before2
+            assert any("write gate is locked" in m for m, _ in said), said
+            assert len(app._changes) == 1

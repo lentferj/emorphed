@@ -106,8 +106,12 @@ The one write path is **midimap parameters** (2048-2407). It is fenced, and
 each rule below is a rule, not a suggestion:
 
 - **The gate is locked by default.** `w` arms it; `--allow-write` arms only
-  the *start* state, not every write. A locked gate refuses rather than
-  sends, and the refusal is said in the interface, not swallowed.
+  the *start* state, not every write. Every write is behind the gate --
+  parameter, name, channel preset, the whole-map store (`s`), the reset
+  (`DEL`), and their undos -- and a locked gate **refuses before anything is
+  sent**, the refusal said in the interface and painted red (the status
+  `refused` class). A locked gate refuses rather than sends, and the refusal
+  is said in the interface, not swallowed.
 - **Back up before the first write.** The first write reads the whole
   midimap into the backup envelope (`emu/backup.py`, kind/block "midimap");
   a failed backup is announced and the parameter write still proceeds --

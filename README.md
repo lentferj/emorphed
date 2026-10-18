@@ -255,7 +255,10 @@ tags, notes, search, device info. Morpheus-specific:
 
   Writes are **gated**: the gate is locked by default, `w` arms it (and
   `--allow-write` arms only the *start* state), and a locked gate refuses
-  rather than sends. The **first** write backs the whole midimap up first -- a
+  rather than sends (painted red). **Every** write is behind it -- parameter,
+  name, channel preset, and the whole-map store (`s`) and reset (`del`) and
+  their undos -- and the refusal comes **before** anything is confirmed or
+  sent. The **first** write backs the whole midimap up first -- a
   failed backup is announced and the parameter write still proceeds; only the
   STORE refuses without a successful backup this session. Every parameter
   write is read back, and only an agreed read-back is logged for `z`/`Z`
