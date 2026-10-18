@@ -301,6 +301,10 @@ destructive step and is **arm-then-fire**: it names the location, states that
 it erases what is there, needs a confirmation, and is refused outright without
 a successful backup this session (manual p.36).
 
+The `DEL` reset writes the application's captured factory default (the unit's
+internal map named ``Dry``, ``mm.DEFAULT_WORDS``), not ``M00`` (which is an
+ordinary user map).
+
 **Presets still cannot be written.** Preset Data sent *to* the unit would
 replace a preset, and nothing in emorphed sends it; presets are read,
 selected and backed up only. `morphcli` has no write command and there is

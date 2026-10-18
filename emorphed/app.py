@@ -1282,12 +1282,14 @@ class EmorphedApp(App[None]):
             self._remember_midimap_name(loc, words)
 
     def _reset_midimap_to_default(self, index: int | None = None) -> None:
-        """Reset a midimap to the factory default (``-defMIDIMap-``).
+        """Reset a midimap to the factory default (the captured ``Dry`` map).
 
-        The manual's Save Midimap screen names the default at ``M00``
-        (p.35): a reset stores that map over the given location. It is a
-        store, so it is fenced the same way -- a backup first, a
-        confirmation that says what is erased, and a read-back.
+        The default is the application's captured factory-default midimap
+        (``mm.DEFAULT_WORDS``, the unit's internal map named ``Dry``), not
+        ``M00`` (which is an ordinary user map). A reset stores that map
+        over the given location. It is a store, so it is fenced the same
+        way -- a backup first, a confirmation that says what is erased, and
+        a read-back.
 
         When ``index`` is ``None`` the open editor's location is used
         (``self._current_midimap_index``, else ``device.current_midimap``,
@@ -1313,15 +1315,15 @@ class EmorphedApp(App[None]):
 
         self.push_screen(
             ConfirmScreen(
-                f"reset M{index:02d} to the default midimap "
-                f"(-defMIDIMap-, M00)? this erases the map there"
+                f"reset M{index:02d} to the factory default midimap? "
+                f"this erases the map there"
             ),
             answered,
         )
 
     @work(thread=True)
     def _reset_midimap_worker(self, index: int) -> None:
-        """**MIDI only** -- back up, read the M00 default, store it."""
+        """**MIDI only** -- back up, write the captured default, store it."""
         failure: BaseException | None = None
         backup_failed: BaseException | None = None
         default: list[int] = []
@@ -1343,7 +1345,7 @@ class EmorphedApp(App[None]):
                     backup_failed = exc
                 else:
                     self._midimap_backed_up = True
-                    default = list(self.device.read_midimap(0))  # M00
+                    default = list(mm.DEFAULT_WORDS)
                     self.device.send_midimap(index, default)
                     stored = list(self.device.read_midimap(index))
         except _BRIDGE_ERRORS as exc:

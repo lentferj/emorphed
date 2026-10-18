@@ -123,9 +123,11 @@ each rule below is a rule, not a suggestion:
   name -- and goes **arm-then-fire** from the chosen location: say what is
   erased, wait for a confirmation. It is refused outright without a
   successful backup this session. **`del` in the editor is the same store**
-  aimed at the open location, carrying the factory default (`-defMIDIMap-`,
-  at M00 -- manual p.35): back up, confirm, store, read back. **`del` in the
-  browser** aims the same reset at the midimap row under the cursor.
+  aimed at the open location, carrying the captured factory default
+  (``mm.DEFAULT_WORDS``, the unit's internal map named ``Dry`` -- not
+  ``M00``, which is an ordinary user map): back up, confirm, store, read
+  back. **`del` in the browser** aims the same reset at the midimap row
+  under the cursor.
 - **Scratch versus stored.** A parameter write edits the unit's **scratch**
   midimap: the value it is using right now, live, not permanent. Only a
   **store** makes an edit part of a stored location, and loading a stored map
@@ -171,6 +173,12 @@ code, docs, test fixtures, example output, screenshots, or filenames.
 - **Fixtures and demo data must be invented.** `emorphed/demo.py` generates
   names from a word pool chosen to be obviously not E-mu's, so a screenshot
   taken in demo mode cannot be mistaken for a real unit's contents.
+- **Deliberate divergence (rule 4):** the captured factory-default
+  midimap's name (``Dry``) is committed in `emu/midimap.py` as
+  `DEFAULT_WORDS`, so `DEL` produces the real factory map. This is the
+  only place an E-mu midimap name appears in the repository, and it is
+  kept because the default must be the unit's own map, not a guess. No
+  other captured names are committed.
 - In findings, **describe instead of naming.** Preset *numbers* identify a
   slot, not a work.
 

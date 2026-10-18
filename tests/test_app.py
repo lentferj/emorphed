@@ -1672,9 +1672,10 @@ class TestTheStorePersists:
             await pilot.press("y")
             await _settle(app, pilot)
             await pilot.pause()
-            # exactly one store, over the open location (the default is M00)
+            # exactly one store, over the open location (the captured default)
             assert len(device.midimap_stores) - stores_before == 1
             assert device.midimap_stores[-1][0] == index
+            assert device.midimap_stores[-1][1] == list(mm.DEFAULT_WORDS)
 
     async def test_browser_del_on_a_midimap_row_resets_to_default(
         self,
@@ -1708,6 +1709,10 @@ class TestTheStorePersists:
             # exactly one store, over that row's location
             assert len(device.midimap_stores) - stores_before == 1
             assert device.midimap_stores[-1][0] == row_index
+            assert device.midimap_stores[-1][1] == list(mm.DEFAULT_WORDS)
+            # the default comes from the constant, not from M00
+            if row_index != 0:
+                assert 0 not in device.midimap_reads
 
     async def test_browser_del_on_a_preset_row_refuses(
         self,

@@ -927,11 +927,10 @@ class MidimapEditScreen(ModalScreen[None]):
             self._on_store()
 
     def action_reset(self) -> None:
-        """Ask the app to reset this map to the default (``-defMIDIMap-``).
+        """Ask the app to reset this map to the factory default.
 
         The screen sends nothing itself: the app confirms, backs up and
-        stores the default. See the manual's Save Midimap screen (p.35),
-        which shows the factory default at ``M00 -defMIDIMap-``.
+        stores the captured factory-default midimap (``mm.DEFAULT_WORDS``).
         """
         if self._on_reset is not None:
             self._on_reset()
