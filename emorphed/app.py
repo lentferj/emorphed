@@ -578,6 +578,8 @@ class EmorphedApp(App[None]):
         # The parallel midimapui agent is adding on_name(text); wire it when
         # available and otherwise stay compatible with the old screen.
         sig = inspect.signature(MidimapEditScreen.__init__).parameters
+        if "index" in sig:
+            ui_kwargs["index"] = index
         if "on_name" in sig:
             ui_kwargs["on_name"] = self._apply_midimap_name
         if "name_for" in sig:

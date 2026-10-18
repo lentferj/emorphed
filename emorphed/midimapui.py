@@ -119,6 +119,7 @@ class MidimapEditScreen(ModalScreen[None]):
         name_for: Callable[[int, int], str] | None = None,
         on_channel: Callable[[int, int, int], None] | None = None,
         on_pick: Callable[[int], None] | None = None,
+        index: int | None = None,
         **kwargs: Any,
     ) -> None:
         # allow positional callbacks after params (legacy shim)
@@ -148,6 +149,8 @@ class MidimapEditScreen(ModalScreen[None]):
         self._filter: str = ""
         self._expanded: set[int] = set()
         self._unstored: bool = False
+        #: The unit's midimap location, 0-31, for the title's ``MNN``.
+        self._index: int = 0 if index is None else index
         self._build_rows()
         self._ordered: list[Any] = self._visible_rows()
 
@@ -556,22 +559,27 @@ class MidimapEditScreen(ModalScreen[None]):
         (``False``): a parameter write edits the unit's **scratch** map,
         and only a Midimap Data frame to a location survives a power
         cycle (the store, manual p.233). The marker is this screen's own
-        state and display only -- the title carries the tag and the
-        status line names what ``s`` does -- while the screen still
-        sends nothing.
+        state and display only -- the status line names it and says what
+        ``s`` does -- while the screen still sends nothing.
         """
         self._unstored = unstored
         self._refresh_title()
 
     def _refresh_title(self) -> None:
+        """``Midimap edit - MNN - <name>`` (the location, then the name).
+
+        The scratch/stored state is not in the title; the status line names
+        it (`set_unstored`), so the top line stays the one-line identity of
+        the map that is open.
+        """
         try:
             title = self.query_one("#midimap-title", Label)
         except Exception:
             return
-        if self._unstored:
-            title.update("[b]Midimap edit[/b] -- scratch, unstored")
-        else:
-            title.update("[b]Midimap edit[/b]")
+        name = "(empty)" if self._name_blank() else self._name_text()
+        title.update(
+            f"[b]Midimap edit[/b] - M{self._index:02d} - {literal(name)}"
+        )
 
     def result(  # noqa: C901, PLR0912
         self,

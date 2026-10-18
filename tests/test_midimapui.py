@@ -1257,8 +1257,23 @@ async def test_the_modal_scales_with_the_terminal_width() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_unstored_marks_the_title_and_the_status() -> None:
-    """After a write the title carries the marker; after a store, not."""
+async def test_the_title_names_the_location_and_the_map() -> None:
+    """``Midimap edit - MNN - <name>`` (the user's line)."""
+    app = MiniApp()
+    async with app.run_test() as pilot:
+        editor = MidimapEditor(gate=EditGate(armed=True))
+        screen = MidimapEditScreen(editor, _full_params(), index=3)
+        app.push_screen(screen)
+        await pilot.pause()
+        title = str(screen.query_one("#midimap-title", Label).content)
+        assert "Midimap edit" in title
+        assert "M03" in title
+        assert "TESTNAME1234" in title
+
+
+@pytest.mark.asyncio
+async def test_set_unstored_marks_the_status_not_the_title() -> None:
+    """The title is the map's identity; the status names the scratch state."""
     app = MiniApp()
     async with app.run_test() as pilot:
         editor = MidimapEditor(gate=EditGate(armed=True))
@@ -1266,25 +1281,21 @@ async def test_set_unstored_marks_the_title_and_the_status() -> None:
         app.push_screen(screen)
         await pilot.pause()
         title = str(screen.query_one("#midimap-title", Label).content)
-        assert "unstored" not in title
+        assert "M00" in title
+        assert "TESTNAME1234" in title
         assert "unstored" not in _status(screen)
 
         screen.set_unstored()
         await pilot.pause()
-        title = str(screen.query_one("#midimap-title", Label).content)
-        assert "unstored" in title
-        # the next status refresh (any cursor movement) names what s does
-        # while the map is unstored; set_unstored itself never clobbers a
-        # message the app has just said
         screen._update_status()
         await pilot.pause()
         assert "s store to a location" in _status(screen)
         assert "(survives a power cycle)" in _status(screen)
+        # the identity line is unchanged by the scratch state
+        assert "M00" in title
 
         screen.set_unstored(False)
         await pilot.pause()
-        title = str(screen.query_one("#midimap-title", Label).content)
-        assert "unstored" not in title
         screen._update_status()
         await pilot.pause()
         assert "unstored" not in _status(screen)

@@ -287,9 +287,10 @@ A channel's selected preset is shown by name (`003 - Pad:BallHyvs`); `+`/`-` on 
   The editor says the distinction in its own footer and status:
   `s store to a location (survives a power cycle)`. What a parameter write
   changes is the unit's *scratch* midimap, live, and **a scratch edit is
-  lost on a power cycle** -- after any edit the editor's title carries an
-  **unstored** marker and its status line repeats the sentence, until a
-  store lands. The store *is* the Midimap Data frame (manual p.233): "If
+  lost on a power cycle** -- after any edit the editor's status line marks
+  the map **unstored** and repeats the sentence, until a store lands. The
+  top line names what is open -- `Midimap edit - M03 - <name>`. The store
+  *is* the Midimap Data frame (manual p.233): "If
   map is sent to current selected location, the scratch map will be loaded
   from the newly stored map. Midimap numbers: 0-15 RAM, 16-31 CARD".
 - **Live names kept between sessions.** Names read off the unit go into
