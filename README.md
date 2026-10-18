@@ -233,7 +233,11 @@ tags, notes, search, device info. Morpheus-specific:
 
 - **Undo.** `z` reverses the last favourites/rating/tags/notes change, `Z` all
   of them, restoring previous values. The undo log is the favourites store's
-  log, not a separate buffer.
+  log, not a separate buffer. A whole-map write -- a store (`s`) or a reset
+  (`del`) -- is one `MidimapChange` record: one `z` restores the location's
+  previous 360 words, and the restore is itself a store (backed up and read
+  back). A second `z` does nothing. (The store itself is still unverified on
+  hardware.)
 - **Editing a midimap.** `m` opens the current midimap's own parameters in a
   modal. The map's 360 words are grouped into its sections -- **Name**,
   **Channel 1** … **Channel 16**, and **Global / Effects** -- the `#`

@@ -128,6 +128,11 @@ each rule below is a rule, not a suggestion:
   ``M00``, which is an ordinary user map): back up, confirm, store, read
   back. **`del` in the browser** aims the same reset at the midimap row
   under the cursor.
+- **Whole-map writes are undoable.** A store (`s`) or reset (`del`) is one
+  `MidimapChange` in the undo timeline; undoing it restores the location's
+  previous 360 words and is itself a store -- backed up first and read back --
+  with `z` as the confirmation (no second modal). The store itself is still
+  unverified on hardware.
 - **Scratch versus stored.** A parameter write edits the unit's **scratch**
   midimap: the value it is using right now, live, not permanent. Only a
   **store** makes an edit part of a stored location, and loading a stored map

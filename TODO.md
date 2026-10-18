@@ -260,7 +260,10 @@ whole midimap up (`emu/backup.py`, kind/block "midimap"); a failed backup
 is announced and the parameter write still proceeds, and only the STORE
 refuses without a successful backup this session. Every write is read back
 and **only an agreed
-read-back is logged**, and `z`/`Z` undo through the UndoLog.
+read-back is logged**, and `z`/`Z` undo through the UndoLog. Whole-map writes
+(the store `s` and the reset `DEL`) are now one `MidimapChange` each in that
+log, restored by one `z` as a backed-up, read-back store (the store itself
+remains unverified on hardware).
 
 **The editor's real surface.** The 360 words are grouped into the map's
 sections -- **Name**, **Channel 1** … **Channel 16**, **Global / Effects** --

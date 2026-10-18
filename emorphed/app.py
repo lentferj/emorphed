@@ -196,6 +196,14 @@ class ChannelPresetChange:
     old_number: int
 
 
+@dataclass(frozen=True)
+class MidimapChange:
+    """One whole-map store: the location and the words it held before."""
+
+    index: int
+    words: tuple[int, ...]
+
+
 class _ChangesView(list[Any]):
     def __init__(self, log: UndoLog, changes: list[Any]) -> None:
         super().__init__(changes)
@@ -221,6 +229,8 @@ def _change_label(change: object) -> str:  # noqa: PLR0911
         return "name"
     if isinstance(change, ChannelPresetChange):
         return "channel preset"
+    if isinstance(change, MidimapChange):
+        return "midimap"
     return "change"
 
 
@@ -1206,13 +1216,27 @@ class EmorphedApp(App[None]):
 
     @work(thread=True)
     def _store_midimap_worker(
-        self, loc: int, words: list[int], index: int | None = None
+        self,
+        loc: int,
+        words: list[int],
+        index: int | None = None,
+        *,
+        record: bool = True,
+        backup: bool = False,
     ) -> None:
         failure = None
         stored: list[int] | None = None
         final_words = list(words)
+        old_words: list[int] | None = None
         try:
             with self._busy_gate:
+                # Read the target's current words before sending, best-effort:
+                # a failed read leaves ``old_words`` as ``None`` and the store
+                # still proceeds.
+                try:
+                    old_words = list(self.device.read_midimap(loc))
+                except Exception:
+                    old_words = None
                 if not final_words:
                     try:
                         final_words = list(
@@ -1222,6 +1246,16 @@ class EmorphedApp(App[None]):
                         )
                     except Exception:
                         final_words = []
+                if backup and old_words is not None:
+                    # Best-effort backup of what is about to be overwritten.
+                    with contextlib.suppress(Exception):
+                        bkmod.save_midimap(
+                            old_words,
+                            device_id=self.device.device_id,
+                            slot=loc,
+                            directory=self._backup_dir(),
+                            source="emorphed (midimap undo)",
+                        )
                 self.device.send_midimap(loc, final_words)
                 stored = list(self.device.read_midimap(loc))
         except _BRIDGE_ERRORS as exc:
@@ -1229,15 +1263,23 @@ class EmorphedApp(App[None]):
         finally:
             self._exchange.release()
         self.call_from_thread(
-            self._finish_store, loc, final_words, stored, failure
+            self._finish_store,
+            loc,
+            final_words,
+            stored,
+            failure,
+            old_words,
+            record,
         )
 
-    def _finish_store(
+    def _finish_store(  # noqa: PLR0913, PLR0917
         self,
         loc: int,
         words: list[int],
         stored: list[int] | None,
         failure: BaseException | None,
+        old_words: list[int] | None = None,
+        record: bool = True,
     ) -> None:
         top = getattr(self, "_edit_screen", None)
         if top is None:
@@ -1280,6 +1322,8 @@ class EmorphedApp(App[None]):
         if not refused:
             self._mark_midimap_unstored(False)
             self._remember_midimap_name(loc, words)
+            if record and old_words is not None and len(old_words) == 360:
+                self._changes.append(MidimapChange(loc, tuple(old_words)))
 
     def _reset_midimap_to_default(self, index: int | None = None) -> None:
         """Reset a midimap to the factory default (the captured ``Dry`` map).
@@ -1322,12 +1366,15 @@ class EmorphedApp(App[None]):
         )
 
     @work(thread=True)
-    def _reset_midimap_worker(self, index: int) -> None:
+    def _reset_midimap_worker(
+        self, index: int, *, record: bool = True
+    ) -> None:
         """**MIDI only** -- back up, write the captured default, store it."""
         failure: BaseException | None = None
         backup_failed: BaseException | None = None
         default: list[int] = []
         stored: list[int] | None = None
+        current: list[int] = []
         try:
             with self._busy_gate:
                 # Back up what is about to be overwritten first: a store
@@ -1359,15 +1406,19 @@ class EmorphedApp(App[None]):
             stored,
             failure,
             backup_failed,
+            current,
+            record,
         )
 
-    def _finish_reset(
+    def _finish_reset(  # noqa: PLR0913, PLR0917
         self,
         index: int,
         default: list[int],
         stored: list[int] | None,
         failure: BaseException | None,
         backup_failed: BaseException | None,
+        current: list[int] | None = None,
+        record: bool = True,
     ) -> None:
         top = getattr(self, "_edit_screen", None)
         if top is None:
@@ -1395,6 +1446,8 @@ class EmorphedApp(App[None]):
                 self._current_midimap_words = list(default)
                 self._midimap_unstored = False
                 self._remember_midimap_name(index, default)
+                if record and current is not None and len(current) == 360:
+                    self._changes.append(MidimapChange(index, tuple(current)))
                 if top is not None and hasattr(top, "update_params"):
                     params = {off: default[off] for off in range(len(default))}
                     with contextlib.suppress(Exception):
@@ -1423,6 +1476,37 @@ class EmorphedApp(App[None]):
 
     def action_undo_all(self) -> None:
         self._undo_master_edits(None)
+
+    def _restore_midimap(self, index: int, words: tuple[int, ...]) -> bool:
+        """Restore a whole map to ``index`` (one store).
+
+        Best-effort backup first, then a read-back (the store's fence). The
+        ``z`` keypress is the confirmation; this is not logged, so a second
+        ``z`` is a no-op. Returns ``False`` without sending when busy or
+        when the exchange cannot be acquired.
+        """
+        if self._busy:
+            self.notify_status("busy", refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is None:
+                top = self.screen
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    top.say("busy", refused=True)
+            return False
+        if not self._exchange.acquire(blocking=False):
+            self.notify_status("busy", refused=True)
+            top = getattr(self, "_edit_screen", None)
+            if top is None:
+                top = self.screen
+            if top is not None and hasattr(top, "say"):
+                with contextlib.suppress(Exception):
+                    top.say("busy", refused=True)
+            return False
+        self._store_midimap_worker(
+            index, list(words), record=False, backup=True
+        )
+        return True
 
     def _undo_master_edits(self, count: int | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         # P2: refuse before consuming when the write gate is locked and the
@@ -1456,6 +1540,7 @@ class EmorphedApp(App[None]):
         params = 0
         names = 0
         channel_presets = 0
+        midimaps = 0
         not_applied: list[Any] = []
         for record in taken:
             change = record.payload
@@ -1490,6 +1575,11 @@ class EmorphedApp(App[None]):
                     channel_presets += 1
                 else:
                     not_applied.append(record)
+            elif isinstance(change, MidimapChange):
+                if self._restore_midimap(change.index, change.words):
+                    midimaps += 1
+                else:
+                    not_applied.append(record)
         # Push back what was not applied, oldest-first.
         for record in reversed(not_applied):
             self._undo_log.push(record)
@@ -1515,6 +1605,8 @@ class EmorphedApp(App[None]):
                 f"{channel_presets} channel "
                 f"preset{'s' if channel_presets != 1 else ''}"
             )
+        if midimaps:
+            parts.append(f"{midimaps} midimap{'s' if midimaps != 1 else ''}")
         if parts:
             msg = "undid " + ", ".join(parts)
             if not_applied:

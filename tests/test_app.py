@@ -1761,3 +1761,93 @@ class TestTheStorePersists:
                 str(slots.get_row_at(i)[2]) for i in range(slots.row_count)
             ]
             assert any("Reset Map 01" in name for name in names), names
+
+
+class TestMidimapStoreUndo:
+    async def test_store_then_z_restores_previous_map(
+        self, app: "EmorphedApp", device: DemoDevice
+    ) -> None:
+        app._midimap_backed_up = True
+        words = [5] * 360
+        old = list(device.read_midimap(2))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            stores_before = len(device.midimap_stores)
+            app._store_confirmed(2, words, True)
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.midimap_stores) - stores_before == 1
+
+            stores_before2 = len(device.midimap_stores)
+            app.action_undo()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.midimap_stores) - stores_before2 == 1
+            assert device.midimap_stores[-1][0] == 2
+            assert device.midimap_stores[-1][1] == old
+            assert app._changes == []
+
+            # a second undo does nothing
+            stores_before3 = len(device.midimap_stores)
+            said = _capture(app)
+            app.action_undo()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.midimap_stores) == stores_before3
+            assert any("nothing to undo" in m for m, _ in said), said
+
+    async def test_reset_then_z_restores_previous_map(
+        self,
+        app: "EmorphedApp",
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            index = app._current_midimap_index
+            assert index is not None
+            old = list(device.read_midimap(index))
+            stores_before = len(device.midimap_stores)
+            app._reset_midimap_to_default()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            await pilot.press("y")
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.midimap_stores) - stores_before == 1
+
+            stores_before2 = len(device.midimap_stores)
+            app.action_undo()
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.midimap_stores) - stores_before2 == 1
+            assert device.midimap_stores[-1][0] == index
+            assert device.midimap_stores[-1][1] == old
+            assert app._changes == []
+
+    async def test_store_readback_disagreement_not_pushed(
+        self,
+        app: "EmorphedApp",
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        app._midimap_backed_up = True
+        words = [5] * 360
+
+        def changed(index: int, *, timeout: float | None = None) -> list[int]:
+            out = list(words)
+            out[0] = 999
+            return out
+
+        monkeypatch.setattr(device, "read_midimap", changed)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._store_confirmed(2, words, True)
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert app._changes == []
