@@ -60,12 +60,17 @@ This is the fact that shapes everything:
    the index**, not the program number. `catalog.make_key(bank_id, number)`
    keys on the instrument's own numbering; a catalog named after an assumed
    program number would enshrine the assumption.
-7. **The card's select bank is unresolved.** `banks.bank_of` sends
-   `index // 128`, which is 2 for a P-CARD preset; a cross-checked
-   implementation bumps the card to bank 3 on the CC 0/32 pair. Dumps address
-   the card as bank 2. Which bank *selects* is TODO item 9 and is not
-   settled here — `select_messages` uses 2 because that is what the manual's
-   arithmetic gives, and the refusal note in the legend says why.
+7. **The card's select bank is 3, not 2 -- measured on the unit
+   2026-10-16 (TODO item 9).** Dumps address the card as bank 2
+   (`request_bank`, `index // 128`, the request-side numbering of manual
+   p.226); the Bank Select byte that *selects* comes from the measured
+   `BANK_SELECT` table -- RAM presets 0, ROM presets 1, RAM hyperpresets 2,
+   card presets 3, card hyperpresets 4 (`emu/banks.py`). The manual carries
+   both numberings -- p.228's "0x0400 + the bank number (0-2)" is the SysEx
+   *request* side, p.159's "ll = Bank number (00-04)" is Bank Select -- and
+   reading request-side 2 off as a Bank Select byte reached the RAM
+   hyperpresets instead of the card. `select_messages` never computes a
+   bank; it reads the table.
 8. **The data messages carry a checksum; the list replies do not (probably).**
    `dumps.read_bytes` strips the checksum only for the three numbered data
    messages. Whether an unnumbered reply carries one is ER-2's bench
@@ -117,8 +122,9 @@ each rule below is a rule, not a suggestion:
   is said in the interface, not swallowed.
 - **Back up before the first write.** The first write reads the whole
   midimap into the backup envelope (`emu/backup.py`, kind/block "midimap");
-  a failed backup is announced and the parameter write still proceeds --
-  only the STORE refuses without a successful backup this session.
+  a failed backup is announced and **that write is refused** -- parameter
+  write and STORE alike go ahead only after a successful backup this
+  session.
 - **Every write is read back.** A parameter read *is* documented: the unit
   answers a Parameter Request (0x02) with the parameter's live value, so the
   read-back is one small frame, not a whole 730-byte dump. **Only an agreed

@@ -351,6 +351,9 @@ class DemoDevice:
             raise m.ProtocolError(
                 f"a midimap body is 360 words; got {len(words)}"
             )
+        # Validate every word fits the fourteen-bit (signed) range, the same
+        # check the wire framing applies, so a bad map is refused here too.
+        m.to_words(words)
         stored = list(words)
         self.midimap_stores.append((index, stored))
         #: A store makes this map the live (scratch) map when its location

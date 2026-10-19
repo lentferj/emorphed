@@ -257,8 +257,8 @@ manual's "Midimap Vers. 1 Parms") can now be edited through a **gated**
 path: `m` opens the editor, `w` arms the gate (locked by default;
 `--allow-write` arms only the start state), the first write backs the
 whole midimap up (`emu/backup.py`, kind/block "midimap"); a failed backup
-is announced and the parameter write still proceeds, and only the STORE
-refuses without a successful backup this session. Every write is read back
+is announced and **that write is refused** -- parameter write and STORE
+alike go ahead only after a successful backup this session. Every write is read back
 and **only an agreed
 read-back is logged**, and `z`/`Z` undo through the UndoLog. Whole-map writes
 (the store `s` and the reset `DEL`) are now one `MidimapChange` each in that

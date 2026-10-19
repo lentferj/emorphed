@@ -132,6 +132,19 @@ def test_demo_send_midimap_word_count() -> None:
     assert dev.read_midimap(2) == words
 
 
+def test_demo_send_midimap_refuses_out_of_range_word() -> None:
+    dev = DemoDevice()
+    bad = [0] * 360
+    bad[0] = -0x2001
+    with pytest.raises(m.ProtocolError):
+        dev.send_midimap(2, bad)
+    # boundary accepted
+    ok = [0] * 360
+    ok[0] = -0x2000
+    dev.send_midimap(2, ok)
+    assert dev.midimap_stores[-1][0] == 2  # noqa: PLR2004
+
+
 # --- the demo midimap seed (D1) ------------------------------------------
 
 
@@ -216,3 +229,45 @@ def test_demo_scratch_and_stored_both_start_as_the_seed() -> None:
     # The scratch map is what a parameter read answers from, and it starts
     # from the same seed as the stored dump.
     assert dev.read_scratch_params() == seed
+
+
+# --- effect-type validation (non-contiguous IDs) ----------------------------
+
+
+def test_fx_a_type_rejects_the_missing_id_15() -> None:
+    editor = E.MidimapEditor()
+    editor.gate.toggle()
+    offset = mm.offset_of("FX A Type")
+    param = mm.param_at(offset)
+    # 15 is inside the numeric range but is not a real effect ID.
+    assert 15 not in mm.values_for(param)  # noqa: PLR2004
+    assert editor.allow(offset, 15) is not None
+    # A real, non-contiguous ID is accepted.
+    assert editor.allow(offset, 16) is None
+
+
+def test_fx_b_type_rejects_the_missing_ids() -> None:
+    editor = E.MidimapEditor()
+    editor.gate.toggle()
+    offset = mm.offset_of("FX B Type")
+    param = mm.param_at(offset)
+    for missing in (136, 137):
+        assert missing not in mm.values_for(param)
+        assert editor.allow(offset, missing) is not None
+    # A real ID (the last one, 138) is accepted.
+    assert editor.allow(offset, 138) is None
+
+
+def test_fx_type_validation_follows_values_for_exactly() -> None:
+    editor = E.MidimapEditor()
+    editor.gate.toggle()
+    for label in ("FX A Type", "FX B Type"):
+        offset = mm.offset_of(label)
+        param = mm.param_at(offset)
+        legal = set(mm.values_for(param))
+        for value in range(param.low, param.high + 1):
+            refusal = editor.allow(offset, value)
+            if value in legal:
+                assert refusal is None, (label, value)
+            else:
+                assert refusal is not None, (label, value)

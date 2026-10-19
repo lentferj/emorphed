@@ -713,7 +713,7 @@ class TestMidimapAppWriteGateAndStore:
             await pilot.pause()
             assert len(device.parameter_writes) == before + 1
 
-    async def test_backup_failure_announced_write_proceeds_flag_stays_false(
+    async def test_backup_failure_announced_write_aborts_flag_stays_false(
         self,
         app: EmorphedApp,
         device: DemoDevice,
@@ -744,7 +744,7 @@ class TestMidimapAppWriteGateAndStore:
             await _settle(app, pilot)
             await pilot.pause()
             assert calls == [True]
-            assert len(device.parameter_writes) == before + 1
+            assert len(device.parameter_writes) == before
             assert app._midimap_backed_up is False
             assert any("could not back up" in msg for msg, _ in said)
 
@@ -1982,3 +1982,140 @@ class TestStartupCatalogVerification:
             await _settle(app, pilot)
             await pilot.pause()
         assert app.catalog.live_count == 0
+
+
+class TestShutdownWaitsForWorkers:
+    async def test_waits_for_active_worker_to_finish(
+        self, tmp_path: Path
+    ) -> None:
+        device = InterleaveDemo(delay=0.3)
+        app = _app_with(device, tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_read_names()
+            await pilot.pause()
+            assert app._active_workers
+            t0 = time.monotonic()
+            ok = app._wait_for_active_workers(5.0)
+            elapsed = time.monotonic() - t0
+            assert ok is True
+            assert elapsed >= 0.2
+            assert not app._active_workers
+
+    async def test_force_closes_after_timeout(self, app: EmorphedApp) -> None:
+        app._active_workers.add(999999)
+        t0 = time.monotonic()
+        ok = app._wait_for_active_workers(0.1)
+        elapsed = time.monotonic() - t0
+        assert ok is False
+        assert elapsed >= 0.09
+        app._active_workers.discard(999999)
+
+
+class TestBackupFenceChannelAndName:
+    async def test_channel_preset_backup_failure_aborts(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def boom(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("backup boom")
+
+        monkeypatch.setattr(bk, "save_midimap", boom)
+        app._gate.toggle()
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            before = len(device.parameter_writes)
+            app._apply_channel_preset(1, 2, 5)
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) == before
+            assert app._midimap_backed_up is False
+            assert any("could not back up" in m for m, _ in said)
+
+    async def test_name_backup_failure_aborts(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def boom(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("backup boom")
+
+        monkeypatch.setattr(bk, "save_midimap", boom)
+        app._gate.toggle()
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            before = len(device.parameter_writes)
+            app._apply_midimap_name("Hi there")
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) == before
+            assert app._midimap_backed_up is False
+            assert any("could not back up" in m for m, _ in said)
+
+
+class TestBackupFenceT10:
+    """Failed backup must block every write path and never crash."""
+
+    async def test_parameter_write_blocked_on_backup_failure(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def boom(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("backup boom")
+
+        monkeypatch.setattr(bk, "save_midimap", boom)
+        app._gate.toggle()
+        said = _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            before = len(device.parameter_writes)
+            app._apply_parameter(14, 10)
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert len(device.parameter_writes) == before
+            assert app._midimap_backed_up is False
+            assert any("could not back up" in m for m, _ in said)
+
+    async def test_backup_failure_does_not_crash(
+        self,
+        app: EmorphedApp,
+        device: DemoDevice,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def boom(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("backup boom")
+
+        monkeypatch.setattr(bk, "save_midimap", boom)
+        app._gate.toggle()
+        _capture(app)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_midimap_edit()
+            await _settle(app, pilot)
+            await pilot.pause()
+            app._apply_parameter(14, 10)
+            await _settle(app, pilot)
+            await pilot.pause()
+            app._apply_channel_preset(1, 2, 5)
+            await _settle(app, pilot)
+            await pilot.pause()
+            app._apply_midimap_name("Hi there")
+            await _settle(app, pilot)
+            await pilot.pause()
+            assert app._midimap_backed_up is False

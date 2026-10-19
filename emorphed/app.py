@@ -49,9 +49,11 @@ rather than as a fault.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import sys
 import threading
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -61,6 +63,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import DataTable, Header, Static
+from textual.worker import get_current_worker
 
 from emorphed import edit as edmod
 from emorphed.midimapui import MidimapEditScreen
@@ -372,6 +375,9 @@ class EmorphedApp(App[None]):
         #: would find neither ``check()`` nor ``is_busy()`` set and start a
         #: second worker. ``_busy`` reads this claim as a third signal.
         self._filling = False
+        #: IDs of @work(thread=True) workers currently running. Tracked so
+        #: shutdown can wait for them instead of closing the bridge underneath.
+        self._active_workers: set[int] = set()
         # Load persisted rating filter from ui-state.
         self.rating_filter: RatingFilter | None = None
         if self._config_path is not None:
@@ -469,6 +475,28 @@ class EmorphedApp(App[None]):
             or (exchange.locked() if exchange else False)
         )
 
+    def _wait_for_active_workers(self, timeout: float = 5.0) -> bool:
+        """Wait up to ``timeout`` seconds for active workers to finish.
+
+        Returns True if they all finished, False on timeout. Used at shutdown
+        and by ``close()`` so the bridge is never closed underneath a live
+        worker.
+        """
+        deadline = time.monotonic() + timeout
+        while getattr(self, "_active_workers", None):
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
+    def close(self) -> None:
+        """Wait for workers, then close the device (force-close on timeout)."""
+        self._wait_for_active_workers(5.0)
+        device = getattr(self, "device", None)
+        if device is not None and hasattr(device, "close"):
+            with contextlib.suppress(Exception):
+                device.close()
+
     def action_toggle_write_gate(self) -> None:
         self._gate.toggle()
         self.notify_status(self._gate.describe())
@@ -481,7 +509,8 @@ class EmorphedApp(App[None]):
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return
-        self._read_midimap_worker()
+        _worker = self._read_midimap_worker()
+        self._active_workers.add(id(_worker))
 
     @work(thread=True)
     def _read_midimap_worker(self) -> None:
@@ -501,6 +530,10 @@ class EmorphedApp(App[None]):
             failure = exc
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         if failure is not None:
             self.call_from_thread(
                 self.notify_status, f"midimap: {failure}", refused=True
@@ -520,7 +553,8 @@ class EmorphedApp(App[None]):
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return
-        self._read_midimap_scratch_worker()
+        _worker = self._read_midimap_scratch_worker()
+        self._active_workers.add(id(_worker))
 
     @work(thread=True)
     def _read_midimap_scratch_worker(self) -> None:
@@ -534,6 +568,10 @@ class EmorphedApp(App[None]):
             failure = exc
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         if failure is not None:
             self.call_from_thread(
                 self.notify_status, f"re-read scratch: {failure}", refused=True
@@ -701,7 +739,8 @@ class EmorphedApp(App[None]):
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return
-        self._write_midimap_name_worker(text)
+        _worker = self._write_midimap_name_worker(text)
+        self._active_workers.add(id(_worker))
 
     def _apply_name_text(self, text: str) -> bool:
         """Restore a name (undo path): writes without a new undo record."""
@@ -723,11 +762,12 @@ class EmorphedApp(App[None]):
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return False
-        self._write_midimap_name_worker(text, record=False)
+        _worker = self._write_midimap_name_worker(text, record=False)
+        self._active_workers.add(id(_worker))
         return True
 
     @work(thread=True)
-    def _write_midimap_name_worker(
+    def _write_midimap_name_worker(  # noqa: C901
         self, text: str, record: bool = True
     ) -> None:
         """**MIDI only**: twelve writes, twelve reads, report agreement."""
@@ -737,7 +777,8 @@ class EmorphedApp(App[None]):
         new_text = text
         try:
             with self._busy_gate:
-                self._backup_before_write()
+                if not self._backup_before_write():
+                    return
                 words = list(
                     getattr(self, "_current_midimap_words", None) or [0] * 360
                 )
@@ -774,6 +815,10 @@ class EmorphedApp(App[None]):
             failure = exc
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         if failure is not None:
             sentence = f"name: {failure}"
             self.call_from_thread(self.notify_status, sentence, refused=True)
@@ -857,7 +902,8 @@ class EmorphedApp(App[None]):
                 except Exception:  # noqa: S110
                     pass
             return False
-        self._apply_parameter_worker(offset, value, record)
+        _worker = self._apply_parameter_worker(offset, value, record)
+        self._active_workers.add(id(_worker))
         return True
 
     @work(thread=True)
@@ -872,13 +918,18 @@ class EmorphedApp(App[None]):
             with self._busy_gate:
                 param_id = mm.PARAM_BASE + offset
                 old = self.device.read_parameter(param_id)
-                self._backup_before_write()
+                if not self._backup_before_write():
+                    return
                 self.device.write_parameter(param_id, value)
                 read_back = self.device.read_parameter(param_id)
         except _BRIDGE_ERRORS as exc:
             failure = exc
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         self.call_from_thread(
             self._parameter_edited,
             offset,
@@ -937,7 +988,10 @@ class EmorphedApp(App[None]):
                         False, "busy", parameter_id=bank_offset, value=bank
                     )
             return False
-        self._apply_channel_preset_worker(channel, bank, number, record=record)
+        _worker = self._apply_channel_preset_worker(
+            channel, bank, number, record=record
+        )
+        self._active_workers.add(id(_worker))
         return True
 
     @work(thread=True)
@@ -963,7 +1017,8 @@ class EmorphedApp(App[None]):
                 else:
                     old_bank = self.device.read_parameter(bank_param)
                     old_number = self.device.read_parameter(program_param)
-                self._backup_before_write()
+                if not self._backup_before_write():
+                    return
                 self.device.write_parameter(bank_param, bank)
                 bank_read = self.device.read_parameter(bank_param)
                 self.device.write_parameter(program_param, number)
@@ -972,6 +1027,10 @@ class EmorphedApp(App[None]):
             failure = exc
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         self.call_from_thread(
             self._finish_channel_preset_write,
             channel,
@@ -1093,9 +1152,9 @@ class EmorphedApp(App[None]):
             with contextlib.suppress(Exception):
                 self._refill_keeping_place()
 
-    def _backup_before_write(self) -> None:
+    def _backup_before_write(self) -> bool:
         if self._midimap_backed_up:
-            return
+            return True
         try:
             _cm = getattr(self.device, "current_midimap", None)
             index = 0 if _cm is None else _cm
@@ -1113,11 +1172,12 @@ class EmorphedApp(App[None]):
                 f"could not back up the midimap: {exc}",
                 refused=True,
             )
-            return
+            return False
         self._midimap_backed_up = True
         self.call_from_thread(
             self.notify_status, f"backed up the midimap as {record.id}"
         )
+        return True
 
     def _backup_dir(self) -> str | None:
         # config maybe; keep None default under data dir
@@ -1232,7 +1292,8 @@ class EmorphedApp(App[None]):
                 with contextlib.suppress(Exception):
                     top.say("busy", refused=True)
             return
-        self._store_midimap_worker(loc, words, index=index)
+        _worker = self._store_midimap_worker(loc, words, index=index)
+        self._active_workers.add(id(_worker))
 
     @work(thread=True)
     def _store_midimap_worker(
@@ -1282,6 +1343,10 @@ class EmorphedApp(App[None]):
             failure = exc
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         self.call_from_thread(
             self._finish_store,
             loc,
@@ -1384,7 +1449,8 @@ class EmorphedApp(App[None]):
             if not self._exchange.acquire(blocking=False):
                 self.notify_status("busy", refused=True)
                 return
-            self._reset_midimap_worker(index)
+            _worker = self._reset_midimap_worker(index)
+            self._active_workers.add(id(_worker))
 
         self.push_screen(
             ConfirmScreen(
@@ -1428,6 +1494,10 @@ class EmorphedApp(App[None]):
             failure = exc
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         self.call_from_thread(
             self._finish_reset,
             index,
@@ -1506,7 +1576,7 @@ class EmorphedApp(App[None]):
     def action_undo_all(self) -> None:
         self._undo_master_edits(None)
 
-    def _restore_midimap(self, index: int, words: tuple[int, ...]) -> bool:
+    def _restore_midimap(self, index: int, words: tuple[int, ...]) -> bool:  # noqa: C901
         """Restore a whole map to ``index`` (one store).
 
         Best-effort backup first, then a read-back (the store's fence). The
@@ -1542,10 +1612,101 @@ class EmorphedApp(App[None]):
                 with contextlib.suppress(Exception):
                     top.say("busy", refused=True)
             return False
-        self._store_midimap_worker(
-            index, list(words), record=False, backup=True
+
+        # Synchronous restore with read-back verification
+        import threading
+
+        done_event = threading.Event()
+        result: dict[str, Any] = {"ok": False, "sentence": ""}
+
+        def on_done(ok: bool, sentence: str) -> None:
+            result["ok"] = ok
+            result["sentence"] = sentence
+            done_event.set()
+
+        # Run the worker synchronously by calling it directly
+        # (we already hold the exchange lock)
+        self._store_midimap_worker_sync(index, list(words), on_done=on_done)
+        done_event.wait()
+
+        if result["ok"]:
+            self.notify_status(result["sentence"])
+            return True
+        else:
+            self.notify_status(result["sentence"], refused=True)
+            return False
+
+    def _store_midimap_worker_sync(
+        self, index: int, words: list[int], on_done: Any
+    ) -> None:
+        """Synchronous version of store worker for undo restore."""
+        failure = None
+        stored: list[int] | None = None
+        try:
+            with self._busy_gate:
+                # Back up what is about to be overwritten first.
+                current = list(self.device.read_midimap(index))
+                try:
+                    bkmod.save_midimap(
+                        current,
+                        device_id=self.device.device_id,
+                        slot=index,
+                        directory=self._backup_dir(),
+                        source="emorphed (midimap undo)",
+                    )
+                except Exception:  # noqa: S110
+                    # If backup fails, proceed but do not mark as backed up
+                    pass
+                else:
+                    self._midimap_backed_up = True
+
+                final_words = list(words)
+                self.device.send_midimap(index, final_words)
+                stored = list(self.device.read_midimap(index))
+        except Exception as exc:
+            failure = exc
+        finally:
+            self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
+        if failure is not None:
+            on_done(False, f"restore: {failure}")
+            return
+
+        stored_list = stored if stored is not None else []
+        total = len(final_words)
+        if stored is None or total == 0 or len(stored_list) != total:
+            on_done(
+                False,
+                f"restore M{index:02d}: read-back was {len(stored_list)} "
+                f"words, not {total}",
+            )
+            return
+
+        agreed = sum(
+            1
+            for sent, got in zip(final_words, stored_list, strict=False)
+            if sent == got
         )
-        return True
+        if agreed == total and total > 0:
+            if (
+                getattr(self, "_current_midimap_words", None) is not None
+                and getattr(self, "_current_midimap_index", None) == index
+            ):
+                self._current_midimap_words = list(final_words)
+            on_done(
+                True,
+                f"restored M{index:02d} (read back {agreed}/{total} "
+                f"words agree)",
+            )
+        else:
+            on_done(
+                False,
+                f"restore M{index:02d}: read-back disagreed "
+                f"({agreed}/{total} words agree)",
+            )
 
     def _undo_master_edits(self, count: int | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         # P2: refuse before consuming when the write gate is locked and the
@@ -2345,7 +2506,8 @@ class EmorphedApp(App[None]):
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return
-        self._select_worker(entry)
+        _worker = self._select_worker(entry)
+        self._active_workers.add(id(_worker))
 
     def _confirm_midimap(self, entry: banks.Slot) -> None:
         midimap_name = f"M{entry.index:02d}"
@@ -2369,7 +2531,8 @@ class EmorphedApp(App[None]):
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return
-        self._select_midimap_worker(entry)
+        _worker = self._select_midimap_worker(entry)
+        self._active_workers.add(id(_worker))
 
     @work(thread=True)
     def _select_worker(self, entry: banks.Slot) -> None:
@@ -2384,6 +2547,10 @@ class EmorphedApp(App[None]):
             return
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         self.call_from_thread(
             self.notify_status,
             f"selected {entry.display} — Bank Select (CC32) "
@@ -2406,6 +2573,10 @@ class EmorphedApp(App[None]):
             return
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         self.call_from_thread(
             self.notify_status,
             f"made Midimap M{entry.index:02d} current on the unit",
@@ -2419,7 +2590,8 @@ class EmorphedApp(App[None]):
             self.notify_status("busy", refused=True)
             return
         entry = banks.region(self._current_bank)
-        self._read_worker(entry.kind)
+        _worker = self._read_worker(entry.kind)
+        self._active_workers.add(id(_worker))
 
     @work(thread=True)
     def _read_worker(self, kind: str) -> None:
@@ -2442,6 +2614,10 @@ class EmorphedApp(App[None]):
             return
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         self.call_from_thread(self._adopt_kind, kind, names)
 
     def _verify_catalog_now(self) -> None:
@@ -2459,7 +2635,8 @@ class EmorphedApp(App[None]):
             return
         if not self._exchange.acquire(blocking=False):
             return
-        self._verify_catalog_worker()
+        _worker = self._verify_catalog_worker()
+        self._active_workers.add(id(_worker))
 
     @work(thread=True)
     def _verify_catalog_worker(self) -> None:
@@ -2486,6 +2663,10 @@ class EmorphedApp(App[None]):
                     self.call_from_thread(self._adopt_kind_quiet, kind, names)
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
 
     def _adopt_kind_quiet(self, kind: str, names: list[str]) -> None:
         self._adopt_kind(kind, names, quiet=True)
@@ -2623,7 +2804,8 @@ class EmorphedApp(App[None]):
             return
         self._scan_cancel = threading.Event()
         self.push_screen(ScanScreen(self._scan_cancel))
-        self._scan_worker(kinds)
+        _worker = self._scan_worker(kinds)
+        self._active_workers.add(id(_worker))
 
     @work(thread=True)
     def _scan_worker(self, kinds: list[str]) -> None:
@@ -2649,6 +2831,10 @@ class EmorphedApp(App[None]):
                     self.call_from_thread(self._adopt_kind, kind, names)
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
             self.call_from_thread(self._scan_finished, done, total)
 
     def _scan_progress(self, kind: str, done: int, total: int) -> None:
@@ -2701,7 +2887,8 @@ class EmorphedApp(App[None]):
         if not self._exchange.acquire(blocking=False):
             self.notify_status("busy", refused=True)
             return
-        self._info_worker()
+        _worker = self._info_worker()
+        self._active_workers.add(id(_worker))
 
     @work(thread=True)
     def _info_worker(self) -> None:
@@ -2720,6 +2907,10 @@ class EmorphedApp(App[None]):
             return
         finally:
             self._exchange.release()
+            try:
+                self._active_workers.discard(id(get_current_worker()))
+            except Exception:  # noqa: S110
+                pass
         self.call_from_thread(self._show_info, version, configuration)
 
     def _show_info(
@@ -2771,6 +2962,18 @@ class EmorphedApp(App[None]):
         self.push_screen(
             ReportScreen("emorphed", f"{_build_line()}\n\n{_HELP}")
         )
+
+    async def action_quit(self) -> None:
+        # Give in-flight workers a chance to finish before the app exits;
+        # main() force-closes the device if any are still running after
+        # the timeout.
+        deadline = time.monotonic() + 5.0
+        while (
+            getattr(self, "_active_workers", None)
+            and time.monotonic() < deadline
+        ):
+            await asyncio.sleep(0.05)
+        self.exit()
 
 
 _HELP = """What the Morpheus holds
@@ -2887,7 +3090,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
+def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, PLR0912, C901
     args = build_parser().parse_args(argv)
     from emu import config as cfg
 
@@ -2995,8 +3198,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
         app.run()
     finally:
         store.close()
+        emptied = app._wait_for_active_workers(5.0)
         with close_when_idle(device, gate=app._busy_gate):
             pass
+        if not emptied and device is not None and hasattr(device, "close"):
+            with contextlib.suppress(Exception):
+                device.close()
     return 0
 
 

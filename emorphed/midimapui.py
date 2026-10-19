@@ -845,8 +845,11 @@ class MidimapEditScreen(ModalScreen[None]):
             def apply_name(text: str | None) -> None:
                 if text is None:
                     return
+                saved_row = row
+                saved_column = self._cursor_column()
                 if self._on_name is not None:
                     self._on_name(text)
+                self._move_to(saved_row, saved_column)
 
             self.app.push_screen(
                 PromptScreen("Midimap Name (12 chars):", current_name),

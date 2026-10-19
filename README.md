@@ -258,9 +258,10 @@ tags, notes, search, device info. Morpheus-specific:
   rather than sends (painted red). **Every** write is behind it -- parameter,
   name, channel preset, and the whole-map store (`s`) and reset (`del`) and
   their undos -- and the refusal comes **before** anything is confirmed or
-  sent. The **first** write backs the whole midimap up first -- a
-  failed backup is announced and the parameter write still proceeds; only the
-  STORE refuses without a successful backup this session. Every parameter
+  sent. The **first** write backs the whole midimap up first -- a failed
+  backup is announced and **that write is refused**: parameter write and
+  STORE alike go ahead only after a successful backup this session. Every
+  parameter
   write is read back, and only an agreed read-back is logged for `z`/`Z`
   undo. The **name** is written as twelve parameter writes to the same scratch
   map, each read back, and **one `z` restores the whole previous name**.
@@ -404,8 +405,11 @@ was settled separately, by the human-attended
   store writes a stored map, and nothing here calls a parameter write saved.
 - **A midimap store is destructive and fenced.** Sending a whole midimap to
   a location erases what is there (manual p.36). It is arm-then-fire, names
-  the location, needs a confirmation and a backup first -- and it is
-  unverified on hardware, as is the whole write path.
+  the location, needs a confirmation and a backup first. The write path
+  splits in two: the parameter *writes* are verified on the unit
+  (2026-10-16 -- the bench wrote channel-1 volume, read it back through a
+  Parameter Request and restored it), and the **store** is the half still
+  unverified on hardware -- the one destructive step and the one unproven.
 - **The effect types are transcribed, not guessed.** FX A carries 25 named
   types (including "No Effect") and FX B 9, each with the parameters the
   manual's effect section gives it. Where the manual does not break a type

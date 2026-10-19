@@ -47,6 +47,16 @@ class TestFourteenBitWords:
         assert m.signed(0x1FFF) == 8191
         assert m.signed(0) == 0
 
+    def test_fourteen_bit_word_accepts_signed_range(self) -> None:
+        # -0x2000 is the lowest legal signed value; -0x2001 is not.
+        with pytest.raises(m.ProtocolError):
+            m.to_words([-0x2001])
+        assert m.to_words([-0x2000]) == bytes([0x00, 0x40])
+        # round trips through signed() for pan values -8..+7.
+        for value in range(-8, 8):
+            word = m.to_words([value])
+            assert m.signed(m.from_words(word)[0]) == value
+
     def test_a_trailing_odd_byte_is_dropped(self) -> None:
         assert m.from_words(bytes([0x01, 0x00, 0x7F])) == [1]
 
@@ -404,6 +414,20 @@ class TestBridgeReadMidimap:
             bridge.write_parameter(2408, 1)
         with pytest.raises(Exception, match=r"0x3FFF|16383"):
             bridge.write_parameter(2048, 0x4000)
+        # Signed fourteen-bit range: -0x2000 is the lowest legal value.
+        with pytest.raises(Exception, match=r"0x3FFF|16383|-8192"):
+            bridge.write_parameter(2048, -0x2001)
+        # accepted (no exception)
+        bridge.write_parameter(2048, -0x2000)
+
+    def test_write_parameter_accepts_signed_pan_values(self) -> None:
+        fake_in = _FakeIn([])
+        fake_out = _FakeOut()
+        bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
+        # Pan range is -8..+7; all of them are legal signed writes.
+        for value in range(-8, 8):
+            bridge.write_parameter(2048, value)
+        assert fake_out.sent[-1][7] == (7 & 0x7F)
 
 
 class TestDemoMidimapRoundTrip:
@@ -421,6 +445,9 @@ class TestDemoMidimapRoundTrip:
             dev.write_parameter(2408, 1)
         with pytest.raises(Exception, match=r"0x3FFF|16383"):
             dev.write_parameter(2048, 0x4000)
+        with pytest.raises(Exception, match=r"0x3FFF|16383|-8192"):
+            dev.write_parameter(2048, -0x2001)
+        dev.write_parameter(2048, -0x2000)
 
 
 class TestParameterRequestBuilder:
@@ -480,6 +507,19 @@ class TestBridgeSendMidimap:
         bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
         bridge.send_midimap(3, words)
         assert fake_out.sent == [list(m.midimap_data(words, number=3))]
+
+    def test_refuses_out_of_range_word(self) -> None:
+        words = [0] * 360
+        words[0] = -0x2001
+        fake_in = _FakeIn([])
+        fake_out = _FakeOut()
+        bridge = b.MorpheusBridge(fake_in, fake_out, device_id=0)
+        with pytest.raises(m.ProtocolError):
+            bridge.send_midimap(3, words)
+        # accepted at the boundary
+        words[0] = -0x2000
+        bridge.send_midimap(3, words)
+        assert fake_out.sent
 
     def test_device_stores_and_read_sees_it(self) -> None:
         words = [7] * 360
