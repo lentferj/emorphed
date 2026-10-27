@@ -456,7 +456,7 @@ scripts.
 
 The code is clean under every gate: ruff (lint + format), mypy strict, and the
 audit tools all pass without suppressions. `rtmidi` and `nano` ship no type
-stubs, so mypy is told to ignore those two imports. `setuptools>=83` is pinned
+stubs, so mypy is told to ignore those two imports. `setuptools>=84.1` is pinned
 as a dev dependency to keep `pip-audit` clear of the build tool's known
 vulnerabilities.
 
