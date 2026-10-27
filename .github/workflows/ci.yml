@@ -1,33 +1,121 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: Copyright (C) 2026  emorphed contributors
+#
+# emorphed's checks on all three platforms the tools run on. The matrix is
+# deliberately the platforms rather than the Python versions: this program
+# talks to a MIDI port, so where it runs matters more than which
+# interpreter it runs under.
+#
+# What it runs, and why those: `uv sync` creates the venv the README
+# documents, then `make check` runs ruff, format-check, mypy, the suite
+# with its coverage report, and the four audits. Nothing is bespoke here --
+# a gate that diverges from the documented one is a gate nobody trusts.
+# The hardware suite (`make test-hardware`) is never run here: it opens
+# real MIDI ports, and CI has no unit attached.
+
 name: check
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+# Least privilege. Nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+# A new push supersedes the run it replaces.
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
+    name: ${{ matrix.os }} · py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
+      # One broken platform should not hide the others' results.
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        # 3.11 is the floor in pyproject.toml and 3.12 is the next one up.
+        # 3.13 is deliberately absent: python-rtmidi publishes wheels for
+        # cp38-cp312 only, so there the install falls back to a source
+        # build needing ALSA headers (Linux), Xcode CLT (macOS) and a C
+        # toolchain (Windows). Re-add it to the matrix when rtmidi ships
+        # a cp313 wheel.
+        python-version: ["3.11", "3.12"]
+    env:
+      # Pin uv to the interpreter this job set up, rather than whatever
+      # `python3` uv happens to discover on PATH.
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
-      - uses: actions/checkout@v4
+      # v7 across the board, matching the sibling projects and vinsynlib.
+      # checkout@v4 and setup-python@v5 target Node 20, which GitHub
+      # deprecated on 2025-09-19 and now force-runs on Node 24 with an
+      # annotation on every job. Nothing here uses an input those majors
+      # changed: checkout is called with no inputs, setup-python only with
+      # `python-version`.
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
 
+      # GitHub's Windows images do not ship GNU make, and `make check` is
+      # the one entry point CI and developers share. SHELL is pointed at
+      # Git Bash because the recipes in the Makefile are POSIX sh, not
+      # cmd.exe -- the audit target in particular chains four tools with
+      # `detect-secrets audit`.
       - name: Install make (Windows)
         if: runner.os == 'Windows'
         run: choco install make -y
 
+      - name: Point make at a POSIX shell (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "SHELL=C:/Program Files/Git/usr/bin/bash.exe" >> "$GITHUB_ENV"
+          make --version
+
       - name: Sync dependencies
         run: uv sync
 
+      # The whole pipeline, exactly as a developer runs it locally.
       - name: Run checks
         run: uv run --no-sync make check
+
+  # The hooks are a separate promise from the pipeline: a change to
+  # .pre-commit-config.yaml can break commits on every platform while
+  # `make check` stays green.
+  pre-commit:
+    name: pre-commit hooks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # The mypy hook runs the project's own .venv (see
+      # .pre-commit-config.yaml): the venv has to exist before the hooks
+      # run, so this job syncs it first.
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Sync dependencies
+        run: uv sync
+
+      # `pre-commit autoupdate` is deliberately not run here. It rewrites
+      # the pinned revisions, and a hook that upgrades itself between the
+      # commit that pins it and the next run of that commit is not pinned.
+      - name: Run every hook over every file
+        uses: pre-commit/action@v3.0.1
