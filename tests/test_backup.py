@@ -9,6 +9,7 @@
 
 import json
 import os
+import sys
 import tempfile
 
 import pytest
@@ -65,7 +66,15 @@ class TestTheEnvelope:
     def test_the_default_directory_is_under_the_data_directory(
         self, monkeypatch, tmp_path
     ) -> None:
-        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        # data_dir() is per-platform: XDG_DATA_HOME only steers it on
+        # Linux/BSD. Point the platform's own variable at tmp_path so the
+        # test means the same thing everywhere CI runs it.
+        if sys.platform == "win32":
+            monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        elif sys.platform == "darwin":
+            monkeypatch.setenv("HOME", str(tmp_path))
+        else:
+            monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
         assert bk.default_dir() == os.path.join(data_dir(), "backups")
         assert bk.default_dir().startswith(str(tmp_path))
         assert os.path.basename(bk.default_dir()) == "backups"

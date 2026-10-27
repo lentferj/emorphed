@@ -80,15 +80,25 @@ class KeyHints(_LibraryKeyHints):
     under the keys -- until the terminal is resized. Requesting the layout
     after each re-wrap keeps the footer only as tall as the wrapped text,
     which is the point of wrapping it here at all.
+
+    The deferred refresh alone is not enough: it can land before the first
+    layout gives this widget its width, and then no resize event ever
+    re-renders it. The timer below re-renders once the size has settled.
     """
 
     def on_mount(self) -> None:
         super().on_mount()
         self.call_after_refresh(self.refresh, layout=True)
+        self.set_timer(0.4, self._recheck_size)
 
     def on_resize(self) -> None:
         super().on_resize()
         self.call_after_refresh(self.refresh, layout=True)
+
+    def _recheck_size(self) -> None:
+        """Re-wrap at the settled width, then take the matching height."""
+        self._render_hints()
+        self.refresh(layout=True)
 
 
 #: Re-exported from vinsynlib: one line of text, submits on enter, cancels

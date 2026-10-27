@@ -20,7 +20,7 @@ import asyncio
 import os
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -1609,21 +1609,45 @@ class TestTheFooterFitsItsText:
     resized. The view then wasted half the screen on a few keys.
     """
 
+    async def _wait_footer_height(
+        self, pilot: Pilot[None], hints: KeyHints, ok: Callable[[int], bool]
+    ) -> None:
+        """Wait until the footer has settled, not just one frame.
+
+        The mount-time re-render is timer-driven, so a single pause is a
+        race on a slow runner -- and on some platforms the only render.
+        """
+        start = time.monotonic()
+        while True:
+            await pilot.pause(0.1)
+            if ok(hints.size.height):
+                return
+            if time.monotonic() - start >= 5.0:
+                raise AssertionError(
+                    f"footer height stuck at {hints.size.height}"
+                )
+
     async def test_the_footer_is_a_few_lines_not_a_band(self) -> None:
         app = EmorphedApp(DemoDevice())
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.pause()
             hints = app.query_one(KeyHints)
-            assert hints.size.height <= 4
+            await self._wait_footer_height(
+                pilot, hints, lambda height: height <= 4
+            )
 
     async def test_the_footer_reflows_when_the_terminal_changes(self) -> None:
         app = EmorphedApp(DemoDevice())
         async with app.run_test(size=(160, 40)) as pilot:
-            await pilot.pause()
-            wide = app.query_one(KeyHints).size.height
+            hints = app.query_one(KeyHints)
+            await self._wait_footer_height(
+                pilot, hints, lambda height: height <= 4
+            )
+            wide = hints.size.height
             await pilot.resize_terminal(70, 40)
-            await pilot.pause()
-            narrow = app.query_one(KeyHints).size.height
+            await self._wait_footer_height(
+                pilot, hints, lambda height: height > wide
+            )
+            narrow = hints.size.height
         assert narrow > wide
 
 
