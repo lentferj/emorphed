@@ -38,6 +38,7 @@ from emorphed.app import (
 from emorphed.demo import DemoDevice, _seed_midimap
 from emorphed.scan import ScanScreen
 from emorphed.screens import (
+    KEY_HINTS,
     KeyHints,
     MidimapPickerScreen,
     ReportScreen,
@@ -47,6 +48,7 @@ from emu import banks, config
 from emu import catalog as cat
 from emu import favorites as fav
 from emu import midimap as mm
+from vinsynlib.keys import LEGEND_SEPARATOR, wrap_blocks
 from vinsynlib.ui.confirm import ConfirmScreen
 from vinsynlib.ui.modals import RatingFilter
 
@@ -1604,10 +1606,29 @@ class TestTheFooterFitsItsText:
     """The footer is a wrapped legend, not a fixed band.
 
     The library re-wraps the hints but never asks for a layout, so the first
-    render -- before the widget has a width -- laid the whole legend out at
-    the minimum width and left the footer that tall until the terminal was
+    render -- before the widget has a width -- lays the whole legend out at
+    the minimum width and leaves the footer that tall until the terminal is
     resized. The view then wasted half the screen on a few keys.
+
+    Since vinsynlib 0.4.4 that first block is capped at ``MAX_LINES``, which
+    bounds the damage but does not make it the right height: at a settled
+    hundred-column width the legend needs four lines, at a hundred and
+    twenty three, and the footer keeps whatever the first render gave it.
+    So these tests assert the settled height *is* the wrapped height, not
+    merely that it is small -- the cap alone would satisfy "small".
     """
+
+    @staticmethod
+    def _settled_lines(width: int) -> int:
+        """How many lines the legend needs at a widget ``width``.
+
+        ``width`` is the widget's own, so the wrap here subtracts the same
+        two padding columns the widget does.
+        """
+        lines = wrap_blocks(
+            KEY_HINTS, max(width - 2, 20), LEGEND_SEPARATOR
+        ).split("\n")
+        return min(len(lines), KeyHints.MAX_LINES)
 
     async def _wait_footer_height(
         self, pilot: Pilot[None], hints: KeyHints, ok: Callable[[int], bool]
@@ -1627,28 +1648,106 @@ class TestTheFooterFitsItsText:
                     f"footer height stuck at {hints.size.height}"
                 )
 
-    async def test_the_footer_is_a_few_lines_not_a_band(self) -> None:
+    async def test_the_footer_is_as_tall_as_its_text(self) -> None:
         app = EmorphedApp(DemoDevice())
         async with app.run_test(size=(120, 40)) as pilot:
             hints = app.query_one(KeyHints)
+            await pilot.pause()
+            wanted = self._settled_lines(hints.size.width)
+            # The premise: at this width the legend needs fewer lines than
+            # the cap, so a footer left at the mount-time block -- four
+            # lines now, a dozen before 0.4.4 -- fails here rather than
+            # passing on "small enough".
+            assert wanted < KeyHints.MAX_LINES
             await self._wait_footer_height(
-                pilot, hints, lambda height: height <= 4
+                pilot, hints, lambda height: height == wanted
             )
 
     async def test_the_footer_reflows_when_the_terminal_changes(self) -> None:
         app = EmorphedApp(DemoDevice())
         async with app.run_test(size=(160, 40)) as pilot:
             hints = app.query_one(KeyHints)
+            await pilot.pause()
+            wide_wanted = self._settled_lines(hints.size.width)
+            assert wide_wanted < KeyHints.MAX_LINES
             await self._wait_footer_height(
-                pilot, hints, lambda height: height <= 4
+                pilot, hints, lambda height: height == wide_wanted
             )
             wide = hints.size.height
             await pilot.resize_terminal(70, 40)
             await self._wait_footer_height(
-                pilot, hints, lambda height: height > wide
+                pilot,
+                hints,
+                lambda height: height == self._settled_lines(hints.size.width),
             )
             narrow = hints.size.height
         assert narrow > wide
+        # Narrow is where the cap bites: the wrap needs more than four, so
+        # the settled height is exactly the cap.
+        assert narrow == KeyHints.MAX_LINES
+
+
+class TestTheLegendCap:
+    """The family caps the legend; emorphed chooses four lines.
+
+    The default of two is right for the canonical list, but emorphed's is
+    longer: at a hundred columns it needs four, and a two-line cap would
+    hide `z` undo, `w` write gate, `q` quit and `?` help -- the last two
+    being the key that lists the rest and the key that leaves.
+    """
+
+    @staticmethod
+    async def _wait_for_legend(
+        pilot: Pilot[None], hints: KeyHints, ok: Callable[[str], bool]
+    ) -> str:
+        """The legend text, once it has settled.
+
+        The mount-time re-render is timer-driven, so one pause is a race on
+        a slow runner; this waits for the content itself, not a frame count.
+        """
+        start = time.monotonic()
+        while True:
+            await pilot.pause(0.1)
+            shown = str(hints.content)
+            if ok(shown):
+                return shown
+            if time.monotonic() - start >= 5.0:
+                raise AssertionError(f"legend stuck at {shown!r}")
+
+    def test_the_cap_is_four_lines(self) -> None:
+        assert KeyHints.MAX_LINES == 4
+
+    async def test_a_hundred_columns_shows_the_whole_legend(self) -> None:
+        app = EmorphedApp(DemoDevice())
+        expected = wrap_blocks(KEY_HINTS, 98, LEGEND_SEPARATOR)
+        async with app.run_test(size=(102, 40)) as pilot:
+            hints = app.query_one(KeyHints)
+            await pilot.pause()
+            # 102 columns, less the two the widget's own padding takes.
+            assert hints.size.width == 100
+            shown = await self._wait_for_legend(
+                pilot, hints, lambda text: text == expected
+            )
+            assert len(shown.split("\n")) == KeyHints.MAX_LINES
+            assert KeyHints.MORE not in shown
+            for block in KEY_HINTS:
+                assert block in shown
+
+    async def test_a_narrow_terminal_points_at_the_rest(self) -> None:
+        app = EmorphedApp(DemoDevice())
+        async with app.run_test(size=(60, 40)) as pilot:
+            hints = app.query_one(KeyHints)
+            shown = await self._wait_for_legend(
+                pilot, hints, lambda text: KeyHints.MORE in text
+            )
+            lines = shown.split("\n")
+            assert len(lines) == KeyHints.MAX_LINES
+            assert lines[-1].endswith(KeyHints.MORE)
+            # The cut lands on a hint boundary: what follows the last
+            # separator is a whole hint, not the front of the next one.
+            body = lines[-1][: -len(KeyHints.MORE)].rstrip()
+            last = body.rsplit(LEGEND_SEPARATOR, 1)[-1].strip()
+            assert last in KEY_HINTS
 
 
 class TestTheStorePersists:

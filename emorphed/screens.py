@@ -75,16 +75,26 @@ class KeyHints(_LibraryKeyHints):
     The library widget re-wraps its text on mount and on resize but never
     asks for a layout, so ``height: auto`` keeps whatever height the first
     render gave it. That first render happens before the widget has a width:
-    the wrap falls back to its minimum, the whole legend stacks into about a
-    dozen lines, and the footer stays that tall -- a band of empty panel
-    under the keys -- until the terminal is resized. Requesting the layout
-    after each re-wrap keeps the footer only as tall as the wrapped text,
-    which is the point of wrapping it here at all.
+    the wrap falls back to its minimum, the whole legend stacks into a
+    tall block, and the footer stays that tall -- a band of empty panel
+    under the keys -- until the terminal is resized. The library's cap keeps
+    that block to ``MAX_LINES``, but it is still the wrong height for the
+    settled width, so requesting the layout after each re-wrap is what makes
+    the footer only as tall as the wrapped text at the width it is shown at.
 
     The deferred refresh alone is not enough: it can land before the first
     layout gives this widget its width, and then no resize event ever
     re-renders it. The timer below re-renders once the size has settled.
     """
+
+    # The family caps the shared legend and lets an app pick the cap. The
+    # default of two lines is right for the canonical list, but emorphed's
+    # is longer: at a hundred columns it needs four, and a two-line cap
+    # would hide `*` rating, `z` undo, `w` write gate, `i` device -- and
+    # `?` help and `q` quit, the two keys that tell you the rest exist and
+    # how to leave. Four shows the whole list at that width and still caps
+    # it on a narrow terminal.
+    MAX_LINES = 4
 
     def on_mount(self) -> None:
         super().on_mount()
